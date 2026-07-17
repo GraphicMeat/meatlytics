@@ -1,0 +1,20 @@
+{
+  "name": "meatlytics",
+  "version": "0.1.0",
+  "description": "Embeddable, self-hosted website analytics as Express middleware",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  },
+  "license": "AGPL-3.0-only"
+}
