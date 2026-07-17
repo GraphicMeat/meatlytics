@@ -159,6 +159,39 @@ test('realtime: active visitors + current pages in last 5 min', () => {
   store.close();
 });
 
+test('countries: pageview visitors grouped by country DESC, unknown as empty string', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(D2, '10:00'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'pageview', path: '/home', country: 'US' },
+    { ts: at(D2, '10:01'), site_id: SITE, visitor: 'B', session_id: 'sB', type: 'pageview', path: '/home', country: 'US' },
+    { ts: at(D2, '10:02'), site_id: SITE, visitor: 'C', session_id: 'sC', type: 'pageview', path: '/home', country: 'DE' },
+    { ts: at(D2, '10:03'), site_id: SITE, visitor: 'D', session_id: 'sD', type: 'pageview', path: '/home', country: null },
+  ]);
+  const rows = Q.countries(store.db, RANGE);
+  assert.deepStrictEqual(rows[0], { country: 'US', visitors: 2 });
+  assert.ok(rows.some((r) => r.country === 'DE' && r.visitors === 1));
+  assert.ok(rows.some((r) => r.country === '' && r.visitors === 1), 'unknown country grouped as empty string');
+  store.close();
+});
+
+test('realtime: countries field counts distinct active visitors per country in window', () => {
+  const store = openStore(tmpDbPath());
+  const now = Date.now();
+  store.insertEvents([
+    { ts: now - 60000, site_id: SITE, visitor: 'X', session_id: 'sx', type: 'pageview', path: '/live', country: 'US' },
+    { ts: now - 120000, site_id: SITE, visitor: 'Y', session_id: 'sy', type: 'pageview', path: '/live', country: 'US' },
+    { ts: now - 90000, site_id: SITE, visitor: 'W', session_id: 'sw', type: 'pageview', path: '/live', country: 'DE' },
+    { ts: now - 10 * 60000, site_id: SITE, visitor: 'Z', session_id: 'sz', type: 'pageview', path: '/old', country: 'FR' },
+  ]);
+  const r = Q.realtime(store.db, { siteId: SITE });
+  const us = r.countries.find((c) => c.country === 'US');
+  const de = r.countries.find((c) => c.country === 'DE');
+  assert.strictEqual(us.n, 2);
+  assert.strictEqual(de.n, 1);
+  assert.ok(!r.countries.some((c) => c.country === 'FR'), 'outside 5-min window excluded');
+  store.close();
+});
+
 test('eventsList: custom event counts + uniques', () => {
   const store = openStore(tmpDbPath());
   seed(store);

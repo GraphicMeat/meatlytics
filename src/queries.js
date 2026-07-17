@@ -251,7 +251,24 @@ function realtime(db, opts) {
        WHERE site_id=? AND type='pageview' AND ts>=? GROUP BY path ORDER BY n DESC LIMIT 20`
     )
     .all(opts.siteId, cutoff);
-  return { active, pages: pages_ };
+  const countries_ = db
+    .prepare(
+      `SELECT COALESCE(country,'') country, COUNT(DISTINCT visitor) n FROM events
+       WHERE site_id=? AND ts>=? GROUP BY COALESCE(country,'') ORDER BY n DESC`
+    )
+    .all(opts.siteId, cutoff);
+  return { active, pages: pages_, countries: countries_ };
+}
+
+function countries(db, opts) {
+  const { from, to } = range(opts);
+  const p = { siteId: opts.siteId, from, to };
+  return db
+    .prepare(
+      `SELECT COALESCE(country,'') country, COUNT(DISTINCT visitor) visitors
+       FROM events WHERE ${pvWhere()} GROUP BY COALESCE(country,'') ORDER BY visitors DESC`
+    )
+    .all(p);
 }
 
 function eventsList(db, opts) {
@@ -266,4 +283,4 @@ function eventsList(db, opts) {
     .all({ siteId: opts.siteId, from, to });
 }
 
-module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, range, vwClause };
+module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, range, vwClause };

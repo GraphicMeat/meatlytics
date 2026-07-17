@@ -100,6 +100,34 @@ test('mouse grid stored aggregated in props_json', async () => {
   mw.stop();
 });
 
+test('known public IP -> event row carries resolved country', async () => {
+  const { mw, server } = makeApp();
+  await request(server)
+    .post('/gm/e')
+    .set('User-Agent', UA)
+    .set('X-Forwarded-For', '217.0.0.1') // known DE-allocated IP
+    .send({ s: 'test', v: 1, e: [{ t: 'pageview', p: '/' }] })
+    .expect(204);
+  mw.collector.flush();
+  const row = mw.store.db.prepare('SELECT * FROM events').get();
+  assert.strictEqual(row.country, 'DE');
+  mw.stop();
+});
+
+test('private IP -> country is null', async () => {
+  const { mw, server } = makeApp();
+  await request(server)
+    .post('/gm/e')
+    .set('User-Agent', UA)
+    .set('X-Forwarded-For', '192.168.1.1')
+    .send({ s: 'test', v: 1, e: [{ t: 'pageview', p: '/' }] })
+    .expect(204);
+  mw.collector.flush();
+  const row = mw.store.db.prepare('SELECT * FROM events').get();
+  assert.strictEqual(row.country, null);
+  mw.stop();
+});
+
 test('raw IP and UA are never stored in any table', async () => {
   const { mw, server } = makeApp();
   const IP = '203.0.113.77';

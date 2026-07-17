@@ -3,13 +3,25 @@
   "version": "0.1.0",
   "description": "Embeddable, self-hosted website analytics as Express middleware",
   "main": "src/index.js",
-  "files": ["src", "dist", "scripts", "README.md"],
+  "files": [
+    "src",
+    "dist",
+    "scripts",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.js",
     "prepare": "node scripts/build.js"
   },
-  "keywords": ["analytics", "privacy", "self-hosted", "express", "middleware", "sqlite"],
+  "keywords": [
+    "analytics",
+    "privacy",
+    "self-hosted",
+    "express",
+    "middleware",
+    "sqlite"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GraphicMeat/meatlytics.git"
@@ -18,7 +30,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^12.11.1",
+    "geoip-country": "^5.0.202607150057"
   },
   "devDependencies": {
     "supertest": "^7.0.0"

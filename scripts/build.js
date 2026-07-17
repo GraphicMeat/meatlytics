@@ -59,7 +59,8 @@ function buildDashboard() {
   console.log(
     `dashboard.html: ${bytes} bytes raw, ${gz} bytes gzipped (limit ${DASH_LIMIT})`
   );
-  if (/https?:\/\//.test(html)) {
+  // XML namespace URIs (createElementNS) are identifiers, not network fetches.
+  if (/https?:\/\/(?!www\.w3\.org\/)/.test(html)) {
     console.error("FAIL: dashboard references an external http(s) host");
     process.exitCode = 1;
   }

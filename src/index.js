@@ -51,6 +51,7 @@ module.exports = function analytics(opts) {
   const distDash = path.join(__dirname, '..', 'dist', 'dashboard.html');
   const srcDash = path.join(__dirname, 'dashboard', 'index.html');
   const overlayJs = path.join(__dirname, 'tracker', 'gm-overlay.js');
+  const worldSvg = path.join(__dirname, 'dashboard', 'world.svg');
 
   function readBody(req, cb) {
     let size = 0;
@@ -117,6 +118,19 @@ module.exports = function analytics(opts) {
 
     if (m === 'GET' && p === '/gm-overlay.js') {
       return serveFile(res, overlayJs, 'application/javascript; charset=utf-8', '');
+    }
+
+    // Vendored world map SVG (public, long-cache); another process supplies the
+    // file, so 404 rather than fall back if it hasn't landed yet.
+    if (m === 'GET' && p === '/gm/world.svg') {
+      if (!fs.existsSync(worldSvg)) {
+        res.statusCode = 404;
+        return res.end();
+      }
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.statusCode = 200;
+      return res.end(fs.readFileSync(worldSvg));
     }
 
     if (m === 'POST' && p === '/_analytics/login') {

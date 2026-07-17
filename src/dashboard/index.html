@@ -58,6 +58,10 @@ canvas{width:100%;display:block}
 #login .err{color:var(--acc);font-size:13px;min-height:18px;margin-top:8px}
 iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;background:#fff}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.wmap{width:100%;height:auto;display:block}
+.wmap path{fill:var(--panel2);stroke:var(--line);stroke-width:.4;vector-effect:non-scaling-stroke}
+.wdot{fill:var(--acc);animation:wpulse 1.6s ease-in-out infinite}
+@keyframes wpulse{0%,100%{opacity:.9}50%{opacity:.3}}
 </style>
 
 <div id="login">
@@ -117,6 +121,44 @@ function api(path){
   });
 }
 function qs(){ return 'from='+state.from+'&to='+state.to; }
+
+// ---------- World map ----------
+var MAP=null; // cached fetch promise -> svg text or null
+function loadMap(){ if(!MAP) MAP=fetch('/gm/world.svg').then(function(r){return r.ok?r.text():null}).catch(function(){return null}); return MAP; }
+var RN; try{ RN=new Intl.DisplayNames(['en'],{type:'region'}); }catch(e){}
+function cname(cc){ if(!cc) return 'Unknown'; try{ return (RN&&RN.of(cc))||cc; }catch(e){ return cc; } }
+function setTitle(el,txt){ var t=el.querySelector('title'); if(!t){ t=document.createElementNS('http://www.w3.org/2000/svg','title'); el.appendChild(t); } t.textContent=txt; }
+// data:[{country,n}]. mode 'choropleth' fills paths; 'live' drops pulsing dots at centroids.
+function renderMap(el, data, mode){
+  loadMap().then(function(svg){
+    if(!svg){ el.innerHTML='<p class="mut">Map unavailable</p>'; return; }
+    el.innerHTML=svg;
+    var s=el.querySelector('svg'); if(!s) return; s.setAttribute('class','wmap');
+    var max=0; data.forEach(function(d){ if(d.country&&d.n>max) max=d.n; });
+    data.forEach(function(d){
+      if(!d.country) return;
+      var p=s.querySelector('[id="'+d.country+'"]'); if(!p) return;
+      if(mode==='choropleth'){
+        p.style.fill='rgba(232,69,31,'+(0.12+(max?Math.sqrt(d.n/max):0)*0.88).toFixed(3)+')';
+        setTitle(p, cname(d.country)+': '+d.n);
+      } else {
+        var b=p.getBBox();
+        var dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        dot.setAttribute('cx',b.x+b.width/2); dot.setAttribute('cy',b.y+b.height/2);
+        dot.setAttribute('r',Math.max(2,Math.sqrt(d.n)*2.4).toFixed(1)); dot.setAttribute('class','wdot');
+        setTitle(dot, cname(d.country)+': '+d.n); s.appendChild(dot);
+      }
+    });
+  });
+}
+function countriesTable(rows){
+  if(!rows.length) return '<p class="mut">No data</p>';
+  var max=rows[0].visitors||1;
+  return '<table><tr><th>Country</th><th class="n">Visitors</th></tr>'+
+    rows.slice(0,10).map(function(r){
+      return '<tr><td class="bar"><span class="fill" style="width:'+(r.visitors/max*100)+'%"></span><span>'+esc(cname(r.country))+'</span></td><td class="n">'+r.visitors+'</td></tr>';
+    }).join('')+'</table>';
+}
 
 function showLogin(){ $('#app').classList.add('hidden'); $('#login').style.display='flex'; }
 function showApp(){ $('#login').style.display='none'; $('#app').classList.remove('hidden'); render(); }
@@ -225,19 +267,21 @@ function renderOverview(){
     });
     return;
   }
-  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs())]).then(function(res){
-    var o=res[0], pg=res[1], sr=res[2];
+  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []})]).then(function(res){
+    var o=res[0], pg=res[1], sr=res[2], co=res[3]||[];
     el.innerHTML=
       '<div class="cards">'+
         card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
         card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+
       '</div>'+
       '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
+      '<div class="panel"><h3>Countries</h3><div class="grid2"><div id="cmap"></div><div>'+countriesTable(co)+'</div></div></div>'+
       '<div class="grid2">'+
         '<div class="panel"><h3>Top pages</h3>'+pagesTable(pg)+'</div>'+
         '<div class="panel"><h3>Sources</h3>'+sourcesBlock(sr)+'</div>'+
       '</div>';
     drawTS(o.timeseries);
+    renderMap($('#cmap'), co.filter(function(r){return r.country}).map(function(r){return {country:r.country,n:r.visitors}}), 'choropleth');
   });
 }
 function card(k,v){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
@@ -368,10 +412,12 @@ function openHeat(){
 function renderRealtime(){
   var el=$('#v-realtime');
   el.innerHTML='<div class="cards"><div class="card"><div class="k">Active now</div><div class="v" id="rtactive">–</div></div></div>'+
+    '<div class="panel"><h3>Live map</h3><div id="rtmap"></div></div>'+
     '<div class="panel"><h3>Current pages</h3><div id="rtpages"><p class="mut">Loading…</p></div></div>';
   function poll(){
     api('realtime').then(function(d){
       $('#rtactive').textContent=d.active;
+      renderMap($('#rtmap'), d.countries||[], 'live');
       $('#rtpages').innerHTML=d.pages.length?'<table><tr><th>Path</th><th class="n">Active</th></tr>'+
         d.pages.map(function(p){return '<tr><td>'+esc(p.path)+'</td><td class="n">'+p.n+'</td></tr>'}).join('')+'</table>':'<p class="mut">No active visitors</p>';
     }).catch(function(){});

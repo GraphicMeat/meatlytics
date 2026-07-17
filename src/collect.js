@@ -1,4 +1,5 @@
 'use strict';
+const geoip = require('geoip-country');
 const { getSalt, visitorHash, resolveSession } = require('./identity');
 
 const MAX_EVENTS = 50;
@@ -29,6 +30,17 @@ function classifyRef(refUrl) {
   return { domain, cls: 'other' };
 }
 
+// IP -> ISO-2 country, uppercase; null on failure or private/unresolvable IP.
+// Never stores the IP itself (see identity.js) — resolved once at ingest time.
+function resolveCountry(ip) {
+  try {
+    const g = ip && geoip.lookup(ip);
+    return (g && g.country) || null;
+  } catch {
+    return null;
+  }
+}
+
 function num(v) {
   return Number.isFinite(v) ? v : null;
 }
@@ -45,6 +57,7 @@ function mapEvent(ev, stamp) {
     site_id: stamp.siteId,
     visitor: stamp.visitor,
     session_id: stamp.session,
+    country: stamp.country,
     type: t,
     path: str(ev.p, 512),
     name: null,
@@ -112,7 +125,8 @@ function createCollector(store, opts) {
     const salt = getSalt(store.db, dateStr);
     const visitor = visitorHash({ salt, ip, ua, siteId });
     const session = resolveSession(store.db, visitor, ts);
-    const stamp = { ts, siteId, visitor, session };
+    const country = resolveCountry(ip);
+    const stamp = { ts, siteId, visitor, session, country };
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
       const row = mapEvent(ev, stamp);
       if (row) queue.push(row);
@@ -191,4 +205,4 @@ function createCollector(store, opts) {
   return { middleware, flush, stop };
 }
 
-module.exports = { createCollector, classifyRef, mapEvent };
+module.exports = { createCollector, classifyRef, mapEvent, resolveCountry };

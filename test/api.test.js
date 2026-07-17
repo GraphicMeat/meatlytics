@@ -85,6 +85,39 @@ test('heat token authorizes only the heatmap route', async () => {
   mw.stop();
 });
 
+test('api good key -> /gm/api/countries returns array', async () => {
+  const { mw, server } = makeApp();
+  const res = await request(server)
+    .get('/gm/api/countries')
+    .set('Authorization', 'Bearer ' + KEY)
+    .expect(200)
+    .expect('Content-Type', /json/);
+  assert.ok(Array.isArray(res.body));
+  mw.stop();
+});
+
+test('/gm/world.svg -> served with no auth required', async () => {
+  const { mw, server } = makeApp();
+  const res = await request(server).get('/gm/world.svg').expect(200);
+  assert.match(res.headers['content-type'], /svg/);
+  mw.stop();
+});
+
+test('/gm/world.svg -> 404 when the asset file is absent', async () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const real = path.join(__dirname, '..', 'src', 'dashboard', 'world.svg');
+  const tmp = real + '.bak';
+  fs.renameSync(real, tmp);
+  try {
+    const { mw, server } = makeApp();
+    await request(server).get('/gm/world.svg').expect(404);
+    mw.stop();
+  } finally {
+    fs.renameSync(tmp, real);
+  }
+});
+
 test('gm-overlay.js is served', async () => {
   const { mw, server } = makeApp();
   const res = await request(server).get('/gm-overlay.js').expect(200);
