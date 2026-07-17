@@ -228,8 +228,7 @@ npm run build     # builds dist/gm.js + dist/dashboard.html, enforces size gates
 ```
 
 Size budgets are enforced by the build: tracker ≤ 3072 bytes gzipped,
-dashboard ≤ 60 KB raw. Design spec and implementation plan live in
-`docs/superpowers/`.
+dashboard ≤ 60 KB raw.
 
 ## License
 

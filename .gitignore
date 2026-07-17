@@ -3,3 +3,8 @@ node_modules/
 *.db-wal
 *.db-shm
 dist/
+
+# planning/orchestration docs — never commit (see skill: no-planning-docs-in-git)
+docs/superpowers/
+docs/plans/
+docs/specs/
