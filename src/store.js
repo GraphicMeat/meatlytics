@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS daily_countries(
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, val TEXT);
 CREATE TABLE IF NOT EXISTS sessions(visitor TEXT PRIMARY KEY, session_id TEXT, last_ts INTEGER);
+CREATE TABLE IF NOT EXISTS passkeys(
+  cred_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
 `;
 
 // SQLite: convert stored ms epoch -> UTC 'YYYY-MM-DD'
@@ -173,6 +180,49 @@ class Store {
     this.db
       .prepare('INSERT INTO meta(key,val) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET val=excluded.val')
       .run(key, String(val));
+  }
+
+  passkeyAdd({ credId, publicKey, counter, name }) {
+    this.db
+      .prepare(
+        'INSERT INTO passkeys(cred_id, public_key, counter, name, created_at) VALUES (?,?,?,?,?)'
+      )
+      .run(credId, JSON.stringify(publicKey), counter || 0, name || '', Date.now());
+  }
+
+  passkeyGet(credId) {
+    const row = this.db.prepare('SELECT * FROM passkeys WHERE cred_id=?').get(credId);
+    if (!row) return undefined;
+    return {
+      credId: row.cred_id,
+      publicKey: JSON.parse(row.public_key),
+      counter: row.counter,
+      name: row.name,
+      createdAt: row.created_at,
+    };
+  }
+
+  passkeyList() {
+    return this.db
+      .prepare('SELECT cred_id, name, created_at FROM passkeys ORDER BY created_at ASC')
+      .all()
+      .map((r) => ({ credId: r.cred_id, name: r.name, createdAt: r.created_at }));
+  }
+
+  passkeyCount() {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM passkeys').get().n;
+  }
+
+  passkeyDelete(credId) {
+    this.db.prepare('DELETE FROM passkeys WHERE cred_id=?').run(credId);
+  }
+
+  passkeyRename(credId, name) {
+    this.db.prepare('UPDATE passkeys SET name=? WHERE cred_id=?').run(name || '', credId);
+  }
+
+  passkeyUpdateCounter(credId, counter) {
+    this.db.prepare('UPDATE passkeys SET counter=? WHERE cred_id=?').run(counter, credId);
   }
 
   close() {

@@ -7,11 +7,10 @@ const analytics = require('../src/index');
 const { buildDashboard } = require('../scripts/build');
 const { tmpDbPath } = require('./helpers');
 
-const PASS = 'letmein';
 const KEY = 'secret-api-key';
 
 function makeApp() {
-  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), dashboardPassword: PASS, apiKey: KEY });
+  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), apiKey: KEY });
   const server = http.createServer((req, res) =>
     mw(req, res, () => {
       res.statusCode = 404;
@@ -44,24 +43,19 @@ test('api good key -> 200 JSON', async () => {
   mw.stop();
 });
 
-test('login: wrong password -> 401, correct -> cookie + token, token authorizes API', async () => {
+test('magic link login: wrong key -> 401, correct -> cookie, cookie session mints a bearer usable on the API', async () => {
   const { mw, server } = makeApp();
-  await request(server).post('/_analytics/login').send({ password: 'nope' }).expect(401);
+  await request(server).get('/_analytics/login?key=nope').expect(401);
 
-  const res = await request(server).post('/_analytics/login').send({ password: PASS }).expect(200);
-  assert.strictEqual(res.body.ok, true);
-  assert.ok(res.body.token, 'returns bearer token');
+  const res = await request(server).get('/_analytics/login?key=' + KEY).expect(302);
   const cookie = res.headers['set-cookie'][0];
   assert.match(cookie, /gm_dash=/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /Path=\/_analytics/);
   assert.match(cookie, /SameSite=Strict/);
 
-  // session token works as bearer on the API
-  await request(server)
-    .get('/gm/api/realtime')
-    .set('Authorization', 'Bearer ' + res.body.token)
-    .expect(200);
+  // session cookie works directly as API auth
+  await request(server).get('/gm/api/realtime').set('Cookie', cookie).expect(200);
   mw.stop();
 });
 

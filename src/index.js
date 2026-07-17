@@ -1,14 +1,65 @@
 'use strict';
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { openStore } = require('./store');
 const { createCollector } = require('./collect');
 const { createAuth } = require('./auth');
+const webauthn = require('./webauthn');
 const api = require('./api');
 
 const PLACEHOLDER_JS = '/* meatlytics: tracker not built yet (run `npm run build`) */\n';
 const DASH_MISSING = '<!doctype html><p>meatlytics: dashboard not built yet (run <code>npm run build</code>)</p>';
 const NIGHTLY_MS = 60 * 60 * 1000; // hourly tick; catch-up is idempotent
+
+function sendJson(res, obj, code = 200) {
+  res.statusCode = code;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(obj));
+}
+
+function unauthorized(res) {
+  sendJson(res, { error: 'unauthorized' }, 401);
+}
+
+// rpId = Host header minus port.
+function rpIdOf(req) {
+  return (req.headers.host || '').split(':')[0];
+}
+
+// Expected origin: same https-detection as the session cookie's Secure flag.
+function originOf(req) {
+  const https =
+    req.headers['x-forwarded-proto'] === 'https' || !!(req.socket && req.socket.encrypted);
+  return (https ? 'https://' : 'http://') + (req.headers.host || '');
+}
+
+function getUserId(store) {
+  let uid = store.metaGet('ownerUserId');
+  if (!uid) {
+    uid = crypto.randomBytes(16).toString('base64url');
+    store.metaSet('ownerUserId', uid);
+  }
+  return uid;
+}
+
+// Registration is allowed with a valid session (adding another passkey) or a
+// valid one-time setup code (bootstrapping the first passkey).
+function regGate(auth, req, body) {
+  if (auth.isSession(req)) return { ok: true, viaSetupCode: false };
+  if (body && typeof body.setupCode === 'string' && auth.checkSetupCode(body.setupCode)) {
+    return { ok: true, viaSetupCode: true };
+  }
+  return { ok: false, viaSetupCode: false };
+}
+
+// Reject + record the failure against the shared throttle, replying 429 once
+// the IP is throttled and 401 otherwise.
+function regGateFail(auth, req, res) {
+  const ip = auth.ipOf(req);
+  auth.recordFail(ip);
+  sendJson(res, { ok: false }, auth.throttled(ip) ? 429 : 401);
+}
 
 function dateStr(ms) {
   return new Date(ms).toISOString().slice(0, 10);
@@ -133,12 +184,143 @@ module.exports = function analytics(opts) {
       return res.end(fs.readFileSync(worldSvg));
     }
 
-    if (m === 'POST' && p === '/_analytics/login') {
-      return readBody(req, (body) => auth.login(req, res, body));
-    }
-
     if (m === 'GET' && p === '/_analytics/login') {
       return auth.loginByKey(req, res, new URL(req.url, 'http://localhost'));
+    }
+
+    if (m === 'POST' && p === '/_analytics/webauthn/auth-options') {
+      const ip = auth.ipOf(req);
+      if (auth.throttled(ip)) return sendJson(res, { ok: false }, 429);
+      if (store.passkeyCount() === 0) return sendJson(res, { error: 'no-passkeys' }, 409);
+      const { id, challenge } = auth.newChallenge();
+      const allowCredentials = store.passkeyList().map((pk) => ({ id: pk.credId }));
+      return sendJson(res, { challengeId: id, challenge, rpId: rpIdOf(req), allowCredentials });
+    }
+
+    if (m === 'POST' && p === '/_analytics/webauthn/authenticate') {
+      return readBody(req, (body) => {
+        const ip = auth.ipOf(req);
+        if (auth.throttled(ip)) {
+          auth.recordFail(ip);
+          return sendJson(res, { ok: false }, 429);
+        }
+        const fail = () => {
+          auth.recordFail(ip);
+          sendJson(res, { ok: false }, auth.throttled(ip) ? 429 : 401);
+        };
+        if (!body || typeof body.challengeId !== 'string' || typeof body.credId !== 'string') {
+          return fail();
+        }
+        const challenge = auth.takeChallenge(body.challengeId);
+        if (!challenge) return fail();
+        const pk = store.passkeyGet(body.credId);
+        if (!pk) return fail();
+        let result;
+        try {
+          result = webauthn.verifyAssertion({
+            authenticatorDataB64u: body.authenticatorData,
+            clientDataJSONB64u: body.clientDataJSON,
+            signatureB64u: body.signature,
+            publicKeyJwk: pk.publicKey,
+            expectedChallenge: challenge,
+            expectedOrigin: originOf(req),
+            expectedRpId: rpIdOf(req),
+            storedCounter: pk.counter,
+          });
+        } catch {
+          return fail();
+        }
+        store.passkeyUpdateCounter(pk.credId, result.counter);
+        auth.clearFail(ip);
+        const tok = auth.setSessionCookie(req, res);
+        sendJson(res, { ok: true, token: tok });
+      });
+    }
+
+    if (m === 'POST' && p === '/_analytics/webauthn/reg-options') {
+      return readBody(req, (body) => {
+        const gate = regGate(auth, req, body);
+        if (!gate.ok) return regGateFail(auth, req, res);
+        const { id, challenge } = auth.newChallenge();
+        const excludeCredentials = store.passkeyList().map((pk) => ({ id: pk.credId }));
+        sendJson(res, {
+          challengeId: id,
+          challenge,
+          rpId: rpIdOf(req),
+          userId: getUserId(store),
+          excludeCredentials,
+        });
+      });
+    }
+
+    if (m === 'POST' && p === '/_analytics/webauthn/register') {
+      return readBody(req, (body) => {
+        const gate = regGate(auth, req, body);
+        if (!gate.ok) return regGateFail(auth, req, res);
+        if (!body || typeof body.challengeId !== 'string') return sendJson(res, { error: 'bad-request' }, 400);
+        const challenge = auth.takeChallenge(body.challengeId);
+        if (!challenge) return sendJson(res, { error: 'bad-challenge' }, 400);
+        let result;
+        try {
+          result = webauthn.verifyRegistration({
+            attestationObjectB64u: body.attestationObject,
+            clientDataJSONB64u: body.clientDataJSON,
+            expectedChallenge: challenge,
+            expectedOrigin: originOf(req),
+            expectedRpId: rpIdOf(req),
+          });
+        } catch {
+          return sendJson(res, { error: 'verify-failed' }, 400);
+        }
+        store.passkeyAdd({
+          credId: result.credId,
+          publicKey: result.publicKeyJwk,
+          counter: result.counter,
+          name: (body.name || '').toString().slice(0, 64),
+        });
+        if (gate.viaSetupCode) {
+          auth.clearSetupCode();
+          const tok = auth.setSessionCookie(req, res);
+          return sendJson(res, { ok: true, token: tok });
+        }
+        sendJson(res, { ok: true });
+      });
+    }
+
+    if (m === 'GET' && p === '/_analytics/api/passkeys') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return sendJson(res, { passkeys: store.passkeyList() });
+    }
+
+    if (m === 'POST' && p === '/_analytics/api/passkeys/rename') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return readBody(req, (body) => {
+        if (!body || typeof body.credId !== 'string') return sendJson(res, { error: 'bad-request' }, 400);
+        store.passkeyRename(body.credId, (body.name || '').toString().slice(0, 64));
+        sendJson(res, { ok: true });
+      });
+    }
+
+    if (m === 'POST' && p === '/_analytics/api/passkeys/delete') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return readBody(req, (body) => {
+        if (!body || typeof body.credId !== 'string') return sendJson(res, { error: 'bad-request' }, 400);
+        if (store.passkeyCount() <= 1) return sendJson(res, { error: 'last-passkey' }, 400);
+        store.passkeyDelete(body.credId);
+        sendJson(res, { ok: true });
+      });
+    }
+
+    if (m === 'GET' && p === '/_analytics/api/key') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return sendJson(res, { apiKey: auth.apiKey, overridden: auth.apiKeyOverridden });
+    }
+
+    if (m === 'POST' && p === '/_analytics/api/key/rotate') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      const newKey = auth.rotateApiKey();
+      if (newKey === null) return sendJson(res, { error: 'overridden' }, 400);
+      return sendJson(res, { apiKey: newKey });
     }
 
     // Dashboard shell (public). If the owner already has a valid session cookie,

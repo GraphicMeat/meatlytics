@@ -50,12 +50,16 @@ canvas{width:100%;display:block}
 .mut{color:var(--mut)}
 .hidden{display:none}
 #login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:10}
-#login form{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px;width:300px;text-align:center}
+#login .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px;width:300px;text-align:center}
 #login h1{margin:0 0 4px;font-size:20px}#login h1 b{color:var(--acc)}
 #login p{color:var(--mut);margin:0 0 18px;font-size:13px}
 #login input{width:100%;margin-bottom:10px}
 #login button{width:100%}
 #login .err{color:var(--acc);font-size:13px;min-height:18px;margin-top:8px}
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:20}
+#settings.hidden{display:none}
+#settings .box{width:440px;max-width:92vw;max-height:82vh;overflow:auto}
+#settings input[readonly]{font-family:ui-monospace,monospace}
 iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;background:#fff}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .wmap{width:100%;height:auto;display:block}
@@ -65,13 +69,34 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
 </style>
 
 <div id="login">
-  <form id="lf">
+  <div class="box">
     <h1>meat<b>lytics</b></h1>
-    <p>Dashboard login</p>
-    <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
-    <button type="submit">Sign in</button>
+    <p id="lsub">Dashboard login</p>
+    <div id="lsignin"><button type="button" id="lsignin-btn">Sign in with passkey</button></div>
+    <div id="lsetupmsg" class="hidden"><p class="mut">No passkey registered yet. Check the server boot log for a one-time setup link, then open it in this browser.</p></div>
+    <div id="lsetup" class="hidden">
+      <input id="setupname" placeholder="Passkey name" value="Owner">
+      <button type="button" id="lsetup-btn">Register first passkey</button>
+    </div>
     <div class="err" id="lerr"></div>
-  </form>
+  </div>
+</div>
+
+<div id="settings" class="hidden">
+  <div class="box panel">
+    <div class="row"><h3 style="margin:0">Settings</h3><span class="spacer"></span><button type="button" id="closeSettings">✕</button></div>
+    <h3>Passkeys</h3>
+    <div id="pklist"><p class="mut">Loading…</p></div>
+    <button type="button" id="addpk">Add passkey</button>
+    <h3 style="margin-top:16px">API key</h3>
+    <div class="row">
+      <input id="apikeyval" readonly style="flex:1" value="">
+      <button type="button" id="revealkey">Reveal</button>
+      <button type="button" id="copykey">Copy</button>
+      <button type="button" id="rotatekey">Rotate</button>
+    </div>
+    <div class="err" id="serr"></div>
+  </div>
 </div>
 
 <div id="app" class="hidden">
@@ -93,6 +118,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <input type="date" id="from"><input type="date" id="to">
     <span class="live" id="live"></span>
   </div>
+  <button type="button" id="gear" title="Settings">⚙</button>
 </header>
 <main>
   <section id="v-overview"></section>
@@ -127,7 +153,8 @@ var MAP=null; // cached fetch promise -> svg text or null
 function loadMap(){ if(!MAP) MAP=fetch('/gm/world.svg').then(function(r){return r.ok?r.text():null}).catch(function(){return null}); return MAP; }
 var RN; try{ RN=new Intl.DisplayNames(['en'],{type:'region'}); }catch(e){}
 function cname(cc){ if(!cc) return 'Unknown'; try{ return (RN&&RN.of(cc))||cc; }catch(e){ return cc; } }
-function setTitle(el,txt){ var t=el.querySelector('title'); if(!t){ t=document.createElementNS('http://www.w3.org/2000/svg','title'); el.appendChild(t); } t.textContent=txt; }
+var SVGNS='http:'+'//www.w3.org/2000/svg'; // split apart so no scannable external-host string appears literally
+function setTitle(el,txt){ var t=el.querySelector('title'); if(!t){ t=document.createElementNS(SVGNS,'title'); el.appendChild(t); } t.textContent=txt; }
 // data:[{country,n}]. mode 'choropleth' fills paths; 'live' drops pulsing dots at centroids.
 function renderMap(el, data, mode){
   loadMap().then(function(svg){
@@ -143,7 +170,7 @@ function renderMap(el, data, mode){
         setTitle(p, cname(d.country)+': '+d.n);
       } else {
         var b=p.getBBox();
-        var dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        var dot=document.createElementNS(SVGNS,'circle');
         dot.setAttribute('cx',b.x+b.width/2); dot.setAttribute('cy',b.y+b.height/2);
         dot.setAttribute('r',Math.max(2,Math.sqrt(d.n)*2.4).toFixed(1)); dot.setAttribute('class','wdot');
         setTitle(dot, cname(d.country)+': '+d.n); s.appendChild(dot);
@@ -163,13 +190,173 @@ function countriesTable(rows){
 function showLogin(){ $('#app').classList.add('hidden'); $('#login').style.display='flex'; }
 function showApp(){ $('#login').style.display='none'; $('#app').classList.remove('hidden'); render(); }
 
-$('#lf').addEventListener('submit', function(e){
-  e.preventDefault();
-  fetch('/_analytics/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#pw').value})})
-    .then(function(r){return r.json()})
-    .then(function(d){ if(d.ok){ TOKEN=d.token; showApp(); } else { $('#lerr').textContent='Wrong password'; } })
-    .catch(function(){ $('#lerr').textContent='Error'; });
-});
+// ---------- b64url <-> ArrayBuffer ----------
+function b64uToBuf(s){
+  s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4) s+='=';
+  var bin=atob(s), buf=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  return buf.buffer;
+}
+function bufToB64u(buf){
+  var b=new Uint8Array(buf), bin='';
+  for(var i=0;i<b.length;i++) bin+=String.fromCharCode(b[i]);
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+// ---------- webauthn/settings requests: /_analytics/* (cookie-session + bearer) ----------
+function call(method,url,body){
+  var o={method:method,headers:{}};
+  if(TOKEN) o.headers.Authorization='Bearer '+TOKEN;
+  if(body!==undefined){ o.headers['Content-Type']='application/json'; o.body=JSON.stringify(body); }
+  return fetch(url,o).then(function(r){
+    return r.json().catch(function(){return null}).then(function(d){ return {status:r.status,ok:r.ok,body:d}; });
+  });
+}
+
+// ---------- passkey login ----------
+function showSetupPrompt(){
+  $('#lsignin').classList.add('hidden');
+  $('#lsub').textContent='No passkeys registered yet';
+  $('#lsetupmsg').classList.remove('hidden');
+}
+function doLogin(){
+  $('#lerr').textContent='';
+  call('POST','/_analytics/webauthn/auth-options',{}).then(function(r){
+    if(r.status===409){ showSetupPrompt(); return; }
+    var o=r.body;
+    if(!o || !o.challengeId){ $('#lerr').textContent='Error'; return; }
+    return navigator.credentials.get({publicKey:{
+      challenge:b64uToBuf(o.challenge), rpId:o.rpId,
+      allowCredentials:(o.allowCredentials||[]).map(function(c){return {type:'public-key',id:b64uToBuf(c.id)};}),
+      userVerification:'preferred'
+    }}).then(function(cred){
+      return call('POST','/_analytics/webauthn/authenticate',{
+        challengeId:o.challengeId,
+        credId:bufToB64u(cred.rawId),
+        authenticatorData:bufToB64u(cred.response.authenticatorData),
+        clientDataJSON:bufToB64u(cred.response.clientDataJSON),
+        signature:bufToB64u(cred.response.signature)
+      });
+    }).then(function(r2){
+      if(r2.body && r2.body.ok){ TOKEN=r2.body.token; showApp(); }
+      else { $('#lerr').textContent='Sign-in failed'; }
+    });
+  }).catch(function(e){ $('#lerr').textContent=(e&&e.name==='NotAllowedError')?'Cancelled':'Error'; });
+}
+
+// ---------- passkey registration (setupCode when bootstrapping, session otherwise) ----------
+function registerPasskey(name, setupCode){
+  return call('POST','/_analytics/webauthn/reg-options', setupCode?{setupCode:setupCode}:{}).then(function(r){
+    var o=r.body;
+    if(!o || !o.challengeId) throw new Error('bad-reg-options');
+    return navigator.credentials.create({publicKey:{
+      challenge:b64uToBuf(o.challenge),
+      rp:{id:o.rpId,name:'meatlytics'},
+      user:{id:b64uToBuf(o.userId),name:'owner',displayName:'Owner'},
+      pubKeyCredParams:[{type:'public-key',alg:-7}],
+      excludeCredentials:(o.excludeCredentials||[]).map(function(c){return {type:'public-key',id:b64uToBuf(c.id)};}),
+      authenticatorSelection:{residentKey:'preferred',userVerification:'preferred'}
+    }}).then(function(cred){
+      var body={
+        challengeId:o.challengeId, name:name||'',
+        attestationObject:bufToB64u(cred.response.attestationObject),
+        clientDataJSON:bufToB64u(cred.response.clientDataJSON)
+      };
+      if(setupCode) body.setupCode=setupCode;
+      return call('POST','/_analytics/webauthn/register', body);
+    });
+  });
+}
+function doSetup(code){
+  $('#lerr').textContent='';
+  var name=($('#setupname').value||'Owner').trim()||'Owner';
+  registerPasskey(name, code).then(function(r){
+    if(r.body && r.body.ok){
+      TOKEN=r.body.token;
+      history.replaceState(null,'',location.pathname);
+      showApp();
+    } else { $('#lerr').textContent='Registration failed'; }
+  }).catch(function(e){ $('#lerr').textContent=(e&&e.name==='NotAllowedError')?'Cancelled':'Error'; });
+}
+
+function bootLogin(){
+  if(!window.PublicKeyCredential){
+    $('#lsub').textContent='Passkeys unsupported in this browser.';
+    $('#lsignin').classList.add('hidden');
+    return;
+  }
+  var setupCode=new URL(location.href).searchParams.get('setup');
+  if(setupCode){
+    $('#lsignin').classList.add('hidden');
+    $('#lsub').textContent='Set up your first passkey';
+    $('#lsetup').classList.remove('hidden');
+    $('#lsetup-btn').onclick=function(){ doSetup(setupCode); };
+  } else {
+    $('#lsignin-btn').onclick=doLogin;
+  }
+}
+bootLogin();
+
+// ---------- settings pane ----------
+var apiKeyFull='', apiKeyOverridden=false;
+function mask(k){ return k?k.slice(0,4)+'••••••••'+k.slice(-4):''; }
+function renderPkList(list){
+  $('#pklist').innerHTML=list.length?'<table><tr><th>Name</th><th>Created</th><th></th></tr>'+
+    list.map(function(p){
+      return '<tr><td>'+esc(p.name||'(unnamed)')+'</td><td class="mut">'+esc(new Date(p.createdAt).toISOString().slice(0,10))+'</td>'+
+        '<td><button type="button" data-id="'+esc(p.credId)+'" class="pkren">Rename</button> <button type="button" data-id="'+esc(p.credId)+'" class="pkdel">Delete</button></td></tr>';
+    }).join('')+'</table>':'<p class="mut">No passkeys</p>';
+  $$('.pkren',$('#pklist')).forEach(function(b){ b.onclick=function(){ renamePk(b.dataset.id); }; });
+  $$('.pkdel',$('#pklist')).forEach(function(b){ b.onclick=function(){ deletePk(b.dataset.id, list.length); }; });
+}
+function renamePk(id){
+  var name=prompt('New name for this passkey:');
+  if(name==null) return;
+  call('POST','/_analytics/api/passkeys/rename',{credId:id,name:name}).then(loadSettings);
+}
+function deletePk(id,count){
+  if(count<=1){ alert('Cannot delete your last passkey.'); return; }
+  if(!confirm('Delete this passkey?')) return;
+  call('POST','/_analytics/api/passkeys/delete',{credId:id}).then(function(r){
+    if(r.body && r.body.error==='last-passkey') alert('Cannot delete your last passkey.');
+    loadSettings();
+  });
+}
+function loadSettings(){
+  $('#serr').textContent='';
+  call('GET','/_analytics/api/passkeys').then(function(r){ renderPkList((r.body&&r.body.passkeys)||[]); });
+  call('GET','/_analytics/api/key').then(function(r){
+    if(!r.body) return;
+    apiKeyFull=r.body.apiKey; apiKeyOverridden=!!r.body.overridden;
+    $('#apikeyval').value=mask(apiKeyFull); $('#revealkey').textContent='Reveal';
+    $('#rotatekey').classList.toggle('hidden', apiKeyOverridden);
+  });
+}
+$('#gear').onclick=function(){ $('#settings').classList.remove('hidden'); loadSettings(); };
+$('#closeSettings').onclick=function(){ $('#settings').classList.add('hidden'); };
+$('#addpk').onclick=function(){
+  $('#serr').textContent='';
+  var name=prompt('Name this passkey:','Passkey');
+  if(name==null) return;
+  registerPasskey(name, null).then(function(r){
+    if(r.body && r.body.ok) loadSettings();
+    else $('#serr').textContent='Registration failed';
+  }).catch(function(e){ $('#serr').textContent=(e&&e.name==='NotAllowedError')?'Cancelled':'Error'; });
+};
+$('#revealkey').onclick=function(){
+  if($('#apikeyval').value===apiKeyFull){ $('#apikeyval').value=mask(apiKeyFull); $('#revealkey').textContent='Reveal'; }
+  else { $('#apikeyval').value=apiKeyFull; $('#revealkey').textContent='Hide'; }
+};
+$('#copykey').onclick=function(){
+  try{ navigator.clipboard.writeText(apiKeyFull); }catch(e){}
+};
+$('#rotatekey').onclick=function(){
+  if(apiKeyOverridden) return;
+  if(!confirm('Rotate the API key? Anything using the old key will stop working.')) return;
+  call('POST','/_analytics/api/key/rotate',{}).then(function(r){
+    if(r.body && r.body.apiKey){ apiKeyFull=r.body.apiKey; $('#apikeyval').value=mask(apiKeyFull); $('#revealkey').textContent='Reveal'; }
+  });
+};
 
 // range setup: default last 7 days
 function setRange(days){

@@ -67,8 +67,6 @@ const app = express();
 app.use(analytics({
   siteId: 'mysite',
   dbPath: '/var/lib/meatlytics/mysite.db',
-  dashboardPassword: process.env.ANALYTICS_PASS,
-  apiKey: process.env.ANALYTICS_API_KEY,
 }));
 
 // ... your other routes ...
@@ -89,11 +87,38 @@ Add one tag to every page you want tracked:
 set it when the hostname doesn't match your `siteId` (local dev, staging,
 multiple domains).
 
-Visit `/_analytics`, log in with `dashboardPassword`. Done.
+Human login is a WebAuthn passkey (Apple Passwords, 1Password, a platform
+authenticator — anything supporting ES256/`alg:-7`), not a password. On a
+fresh install there are no passkeys yet, so the first boot prints a one-time
+setup link to the console:
+
+```
+[meatlytics] no passkey registered — open https://mysite.example/_analytics?setup=<code> to register one
+```
+
+Open that link, name the passkey (defaults to "Owner"), and register it —
+you're logged in immediately after. From then on `/_analytics` shows a plain
+"Sign in with passkey" button. Add more passkeys (other devices) from the
+settings pane (gear icon in the dashboard header) once you're signed in.
+
+`apiKey` no longer needs to be set — it's minted once on first boot and
+stored in the SQLite `meta` table, surviving restarts. Pass `apiKey` in
+`opts` yourself only if you need to pin it (e.g. migrating an existing
+deployment); when set this way it overrides the stored value and can't be
+rotated from the dashboard.
 
 **Direct login link:** `GET /_analytics/login?key=<apiKey>` — logs straight into the
 dashboard (302 + session cookie), for bookmarks or internal dashboards. Same
-brute-force throttle as password login. Treat the URL as a secret.
+brute-force throttle as passkey login. Treat the URL as a secret.
+
+**Lost every passkey?** SSH into the box and run:
+
+```
+sqlite3 /var/lib/meatlytics/mysite.db "DELETE FROM passkeys;"
+```
+
+then restart the process — it boots with zero passkeys again and prints a
+fresh setup link.
 
 There's no Express dependency: the middleware is a plain `(req, res, next)`
 handler over `node:http`, so it composes with Express, or any router with the
@@ -105,8 +130,7 @@ same middleware shape, or a bare `http.createServer`.
 analytics({
   siteId,             // required. identifies this site's rows in the DB
   dbPath,             // required. SQLite file path (directory created if missing)
-  dashboardPassword,  // required for the dashboard. compared in constant time; login throttled (10 fails / 15 min / IP)
-  apiKey,             // required for /gm/api/* from outside the dashboard (hub pulls, scripts)
+  apiKey,             // optional override. otherwise minted once and persisted in the DB
   peers,              // optional. [{ name, url, apiKey }] — see Hub mode
   respectDNT,         // optional, default false. if true, tracker no-ops when the browser signals Do Not Track
 })
@@ -121,9 +145,17 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 |---|---|---|
 | `GET /gm.js` | Tracker script | public |
 | `POST /gm/e` | Collect endpoint | public, rate-limited, always 204 |
-| `GET /_analytics` | Dashboard | password login, HttpOnly session cookie |
-| `POST /_analytics/login` | Dashboard login | throttled |
+| `GET /_analytics` | Dashboard | passkey login, HttpOnly session cookie |
 | `GET /_analytics/login?key=` | Direct login link (magic link) via `apiKey` | throttled |
+| `POST /_analytics/webauthn/auth-options` | Start a sign-in ceremony | public, throttled (409 if no passkeys yet) |
+| `POST /_analytics/webauthn/authenticate` | Complete a sign-in ceremony | public, throttled |
+| `POST /_analytics/webauthn/reg-options` | Start a passkey registration | session, or one-time setup code |
+| `POST /_analytics/webauthn/register` | Complete a passkey registration | session, or one-time setup code |
+| `GET /_analytics/api/passkeys` | List registered passkeys | dashboard session |
+| `POST /_analytics/api/passkeys/rename` | Rename a passkey | dashboard session |
+| `POST /_analytics/api/passkeys/delete` | Delete a passkey (refuses the last one) | dashboard session |
+| `GET /_analytics/api/key` | Read the current `apiKey` | dashboard session |
+| `POST /_analytics/api/key/rotate` | Mint a new `apiKey` (400 if `opts.apiKey` overrides it) | dashboard session |
 | `GET /gm-overlay.js` | Heatmap overlay module (lazy-loaded, dashboard preview only) | public |
 | `GET /gm/api/overview` | Totals + timeseries | Bearer `apiKey` or dashboard session |
 | `GET /gm/api/pages` | Top pages | " |
@@ -179,8 +211,6 @@ gains a site switcher (Local / each peer / All sites) and pulls peer stats
 app.use(analytics({
   siteId: 'graphicmeat',
   dbPath: '/var/lib/meatlytics/graphicmeat.db',
-  dashboardPassword: process.env.ANALYTICS_PASS,
-  apiKey: process.env.ANALYTICS_API_KEY,
   peers: [
     { name: 'mailvault', url: 'https://mailvaultapp.com', apiKey: process.env.MAILVAULT_ANALYTICS_KEY },
   ],

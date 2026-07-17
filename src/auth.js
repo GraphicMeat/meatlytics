@@ -5,12 +5,14 @@ const crypto = require('node:crypto');
 // tokens survive restarts. Two token kinds share the secret:
 //   session token  s<exp>.<hmac>  -> dashboard owner (cookie + in-memory bearer)
 //   heat token     h<exp>.<hmac>  -> short-lived, lets the gm-overlay iframe read /gm/api/heatmap
-// Password is compared in constant time; no bcrypt (would break the 1-dep budget).
-// ponytail: plaintext password compare — it's the owner's own env secret, not stored.
+// Human login is WebAuthn passkeys (see webauthn.js + index.js routes); this
+// module owns the session/heat tokens, the api key, the challenge store, the
+// one-time setup code, and the shared brute-force throttle.
 
 const COOKIE = 'gm_dash';
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 const HEAT_TTL_MS = 10 * 60 * 1000;
+const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 
 function getSecret(store) {
   let s = store.metaGet('dashSecret');
@@ -62,7 +64,8 @@ function createAuth(store, opts) {
   // Session present via HttpOnly cookie (used when serving the dashboard HTML).
   const isSession = (req) => valid(cookieToken(req), 's');
 
-  // Login brute-force throttle: 10 failures / 15 min per IP, in-memory.
+  // Login brute-force throttle: 10 failures / 15 min per IP, in-memory. Shared
+  // across password-era routes and the webauthn/setup-code routes in index.js.
   const fails = new Map();
   function throttled(ip) {
     const f = fails.get(ip);
@@ -73,6 +76,9 @@ function createAuth(store, opts) {
     if (f && Date.now() - f.t < 15 * 60 * 1000) f.n++;
     else fails.set(ip, { n: 1, t: Date.now() });
     if (fails.size > 10000) fails.clear();
+  }
+  function clearFail(ip) {
+    fails.delete(ip);
   }
 
   function ipOf(req) {
@@ -94,38 +100,20 @@ function createAuth(store, opts) {
     return tok;
   }
 
-  // POST /_analytics/login body {password}. Sets cookie + returns bearer token.
-  function login(req, res, body) {
-    const ip = ipOf(req);
-    const pass = body && typeof body.password === 'string' ? body.password : '';
-    const ok =
-      !throttled(ip) && !!opts.dashboardPassword && timingEq(pass, opts.dashboardPassword);
-    res.setHeader('Content-Type', 'application/json');
-    if (!ok) {
-      recordFail(ip);
-      res.statusCode = throttled(ip) ? 429 : 401;
-      return res.end('{"ok":false}');
-    }
-    fails.delete(ip);
-    const tok = setSessionCookie(req, res);
-    res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, token: tok }));
-  }
-
-  // GET /_analytics/login?key=<apiKey>. Same throttle/fails map as password
-  // login (key attempts count as fails too). Redirects into the dashboard
-  // with a fresh session cookie on success -- for bookmarks/internal links.
+  // GET /_analytics/login?key=<apiKey>. Same throttle/fails map as everything
+  // else (key attempts count as fails too). Redirects into the dashboard with
+  // a fresh session cookie on success -- for bookmarks/internal links.
   function loginByKey(req, res, url) {
     const ip = ipOf(req);
     const key = (url.searchParams.get('key') || '').toString();
-    const ok = !throttled(ip) && !!opts.apiKey && timingEq(key, opts.apiKey);
+    const ok = !throttled(ip) && timingEq(key, apiKey);
     if (!ok) {
       recordFail(ip);
       res.statusCode = throttled(ip) ? 429 : 401;
       res.setHeader('Content-Type', 'application/json');
       return res.end('{"ok":false}');
     }
-    fails.delete(ip);
+    clearFail(ip);
     setSessionCookie(req, res);
     res.statusCode = 302;
     res.setHeader('Location', '/_analytics');
@@ -136,14 +124,91 @@ function createAuth(store, opts) {
   // session cookie, or (heatmap route only) a valid heat token in ?t=.
   function apiAllowed(req, url) {
     const b = bearer(req);
-    if (opts.apiKey && timingEq(b, opts.apiKey)) return true;
+    if (apiKey && timingEq(b, apiKey)) return true;
     if (valid(b, 's')) return true;
     if (isSession(req)) return true;
     if (url && url.pathname === '/gm/api/heatmap' && valid(url.searchParams.get('t'), 'h')) return true;
     return false;
   }
 
-  return { login, loginByKey, isSession, apiAllowed, makeSession, makeHeatToken };
+  // --- api key: opts.apiKey overrides; otherwise minted once + persisted ----
+
+  const apiKeyOverridden = !!opts.apiKey;
+  let apiKey = opts.apiKey || store.metaGet('apiKey');
+  if (!apiKey) {
+    apiKey = crypto.randomBytes(16).toString('hex');
+    store.metaSet('apiKey', apiKey);
+  }
+
+  function rotateApiKey() {
+    if (apiKeyOverridden) return null;
+    apiKey = crypto.randomBytes(16).toString('hex');
+    store.metaSet('apiKey', apiKey);
+    auth.apiKey = apiKey;
+    return apiKey;
+  }
+
+  // --- webauthn challenges: in-memory, 2-min TTL, single-use ----------------
+
+  const challenges = new Map(); // id -> { challenge, exp }
+  function sweepChallenges() {
+    const now = Date.now();
+    for (const [id, c] of challenges) if (c.exp <= now) challenges.delete(id);
+  }
+  function newChallenge() {
+    sweepChallenges();
+    if (challenges.size > 10000) challenges.clear(); // same cap ethos as fails map
+    const id = crypto.randomBytes(32).toString('base64url');
+    const challenge = crypto.randomBytes(32).toString('base64url');
+    challenges.set(id, { challenge, exp: Date.now() + CHALLENGE_TTL_MS });
+    return { id, challenge };
+  }
+  function takeChallenge(id) {
+    const c = challenges.get(id);
+    if (!c) return null;
+    challenges.delete(id); // single-use regardless of outcome
+    if (c.exp <= Date.now()) return null;
+    return c.challenge;
+  }
+
+  // --- one-time setup code: printed at boot while zero passkeys exist -------
+
+  let setupCode = null;
+  if (store.passkeyCount() === 0) {
+    setupCode = crypto.randomBytes(16).toString('hex');
+    console.log(
+      `[meatlytics] no passkey registered — open https://${opts.siteId}/_analytics?setup=${setupCode} to register one`
+    );
+  }
+  function checkSetupCode(code) {
+    if (!setupCode || store.passkeyCount() !== 0) return false;
+    return typeof code === 'string' && timingEq(code, setupCode);
+  }
+  function clearSetupCode() {
+    setupCode = null;
+  }
+
+  const auth = {
+    loginByKey,
+    isSession,
+    apiAllowed,
+    makeSession,
+    makeHeatToken,
+    setSessionCookie,
+    ipOf,
+    throttled,
+    recordFail,
+    clearFail,
+    newChallenge,
+    takeChallenge,
+    checkSetupCode,
+    clearSetupCode,
+    rotateApiKey,
+    apiKey,
+    apiKeyOverridden,
+    _challenges: challenges, // test seam: force-expire a challenge
+  };
+  return auth;
 }
 
 module.exports = { createAuth, timingEq };
