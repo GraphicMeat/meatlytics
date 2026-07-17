@@ -177,7 +177,7 @@ function createAuth(store, opts) {
   if (store.passkeyCount() === 0) {
     setupCode = crypto.randomBytes(16).toString('hex');
     console.log(
-      `[meatlytics] no passkey registered — open https://${opts.siteId}/_analytics?setup=${setupCode} to register one`
+      `[meatlytics] ${opts.siteId}: no passkey registered — open /_analytics?setup=${setupCode} on the dashboard origin to register one`
     );
   }
   function checkSetupCode(code) {

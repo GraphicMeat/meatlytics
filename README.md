@@ -93,7 +93,7 @@ fresh install there are no passkeys yet, so the first boot prints a one-time
 setup link to the console:
 
 ```
-[meatlytics] no passkey registered — open https://mysite.example/_analytics?setup=<code> to register one
+[meatlytics] mysite: no passkey registered — open /_analytics?setup=<code> on the dashboard origin to register one
 ```
 
 Open that link, name the passkey (defaults to "Owner"), and register it —
