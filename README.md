@@ -10,7 +10,15 @@ tracker or the backend.
 
 ## Install
 
-Not published to npm yet. Point at the repo directly:
+```
+npm install meatlytics                          # once published to npm
+npm install github:GraphicMeat/meatlytics        # straight from GitHub, no publish needed
+```
+
+The GitHub install works as soon as the repo is pushed — npm's `prepare`
+lifecycle script builds `dist/` automatically after cloning.
+
+For local development against a checkout on disk:
 
 ```json
 {
@@ -20,8 +28,7 @@ Not published to npm yet. Point at the repo directly:
 }
 ```
 
-(swap the relative path for wherever you've checked this repo out, or replace
-with a git/npm reference once published).
+(swap the relative path for wherever you've checked this repo out.)
 
 Only runtime dependency: `better-sqlite3`.
 
