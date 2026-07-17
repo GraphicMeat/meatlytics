@@ -80,6 +80,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <button data-v="heatmaps">Heatmaps</button>
     <button data-v="realtime">Realtime</button>
   </nav>
+  <select id="siteSel" class="hidden"></select>
   <span class="spacer"></span>
   <div class="range" id="range">
     <button data-p="1">Day</button>
@@ -100,9 +101,10 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
 
 <script>
 var TOKEN = %TOKEN%;
+var PEERS = %PEERS%;
 var $ = function(s,r){return (r||document).querySelector(s)};
 var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
-var state = {view:'overview', from:'', to:'', rtTimer:0};
+var state = {view:'overview', site:'local', from:'', to:'', rtTimer:0};
 
 function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function pct(x){ return (x*100).toFixed(1)+'%'; }
@@ -149,6 +151,54 @@ $$('#nav button').forEach(function(b){ b.onclick=function(){
   render();
 };});
 
+// ---------- Site switcher (hub mode: peers configured) ----------
+if(PEERS.length){
+  var siteSel=$('#siteSel');
+  siteSel.classList.remove('hidden');
+  siteSel.innerHTML='<option value="local">Local</option>'+
+    PEERS.map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>'}).join('')+
+    '<option value="__all__">All sites</option>';
+  siteSel.onchange=function(){
+    state.site=this.value;
+    var peerMode=state.site!=='local';
+    $$('#nav button').forEach(function(b){ b.disabled = peerMode && b.dataset.v!=='overview'; });
+    if(peerMode && state.view!=='overview'){
+      $$('#nav button').forEach(function(x){x.classList.remove('on')});
+      $('#nav button[data-v="overview"]').classList.add('on');
+      state.view='overview';
+      $$('main > section').forEach(function(s){s.classList.add('hidden')});
+      $('#v-overview').classList.remove('hidden');
+    }
+    render();
+  };
+}
+
+// Merge hub /gm/api/hub/overview sites into one overview-shaped object.
+// which: 'local' handled elsewhere; a peer name picks that one site; '__all__' sums every reachable site.
+function combineSites(sites, which){
+  var offline=[], picked=[];
+  if(which==='__all__'){
+    picked = sites.filter(function(s){ if(!s.ok) offline.push(s.name); return s.ok; });
+  } else {
+    var one = sites.filter(function(s){ return s.name===which; })[0];
+    if(one && one.ok) picked=[one]; else if(one) offline.push(one.name);
+  }
+  if(!picked.length) return {visitors:0,pageviews:0,avgDuration:0,bounceRate:0,timeseries:[],offline:offline};
+  var visitors=0,pageviews=0,durSum=0,bounceSum=0,tsMap={};
+  picked.forEach(function(s){
+    var d=s.data;
+    visitors+=d.visitors; pageviews+=d.pageviews;
+    durSum+=d.avgDuration*d.pageviews; bounceSum+=d.bounceRate*d.pageviews;
+    (d.timeseries||[]).forEach(function(row){
+      var e=tsMap[row.date]||{date:row.date,visitors:0,pageviews:0};
+      e.visitors+=row.visitors; e.pageviews+=row.pageviews; tsMap[row.date]=e;
+    });
+  });
+  var ts=Object.keys(tsMap).sort().map(function(k){return tsMap[k]});
+  return {visitors:visitors,pageviews:pageviews,avgDuration:pageviews?Math.round(durSum/pageviews):0,
+    bounceRate:pageviews?bounceSum/pageviews:0,timeseries:ts,offline:offline};
+}
+
 function render(){
   if(state.view==='overview') renderOverview();
   else if(state.view==='flows') renderFlows();
@@ -161,6 +211,20 @@ function render(){
 // ---------- Overview ----------
 function renderOverview(){
   var el=$('#v-overview');
+  if(state.site && state.site!=='local'){
+    api('hub/overview?'+qs()).then(function(d){
+      var o=combineSites(d.sites, state.site);
+      el.innerHTML=
+        '<div class="cards">'+
+          card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
+          card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+
+        '</div>'+
+        '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
+        (o.offline.length?'<p class="mut">Offline: '+o.offline.map(esc).join(', ')+'</p>':'');
+      drawTS(o.timeseries);
+    });
+    return;
+  }
   Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs())]).then(function(res){
     var o=res[0], pg=res[1], sr=res[2];
     el.innerHTML=

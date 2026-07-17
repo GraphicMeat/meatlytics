@@ -1,5 +1,6 @@
 'use strict';
 const Q = require('./queries');
+const hub = require('./hub');
 
 // Parse ?steps=path:/a,event:signup,path:/b into [{type,value}].
 function parseSteps(raw) {
@@ -56,6 +57,9 @@ function handle(req, res, url, ctx) {
       return json(res, Q.realtime(db, { siteId: ctx.siteId })), true;
     case '/gm/api/events':
       return json(res, Q.eventsList(db, base)), true;
+    case '/gm/api/hub/overview':
+      hub.overview({ store: ctx.store, siteId: ctx.siteId, peers: ctx.peers }, sp.toString()).then((data) => json(res, data));
+      return true;
     default:
       return json(res, { error: 'not found' }, 404), true;
   }

@@ -134,6 +134,7 @@ module.exports = function analytics(opts) {
       }
       const tok = auth.isSession(req) ? JSON.stringify(auth.makeSession()) : 'null';
       html = html.replace('%TOKEN%', tok);
+      html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.statusCode = 200;
@@ -147,7 +148,7 @@ module.exports = function analytics(opts) {
         res.setHeader('Content-Type', 'application/json');
         return res.end('{"error":"unauthorized"}');
       }
-      return api.handle(req, res, url, { store, siteId: opts.siteId, auth });
+      return api.handle(req, res, url, { store, siteId: opts.siteId, auth, peers: opts.peers });
     }
 
     if (next) return next();
