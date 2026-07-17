@@ -1,18 +1,50 @@
 # meatlytics
 
-The quickest, lightest self-hosted website analytics available. One npm package,
-mounted as framework-light middleware (no Express dependency — it's plain
-`node:http` under the hood, so it works with `app.use()` in Express or any
-router that composes `(req, res, next)` handlers the same way). Everything —
-tracker, collector, storage, dashboard — ships in this one package. All data
-stays on the server that runs it. No third-party requests, ever, in either the
-tracker or the backend.
+Self-hosted website analytics that weighs nothing and shares nothing.
+
+One npm package, mounted as middleware on the Node server you already run.
+Tracker, collector, storage, and dashboard all ship inside it. Every byte of
+analytics data stays on your server — no third-party requests, ever, from the
+client or the backend. That's a build gate, not a promise.
+
+```
+tracker         1.6 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
+dashboard       6.3 KB gzipped   single self-contained HTML file, no framework
+dependencies    1                (better-sqlite3)
+collect
+throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
+```
+
+## What it captures — automatically
+
+Add one script tag. No configuration, no event wiring:
+
+- **Pageviews** — including SPA route changes (History API)
+- **Sessions, flows** — entry → path → exit chains with drop-off counts
+- **Funnels** — built ad-hoc in the dashboard from pages or custom events, computed retroactively — no pre-registration
+- **Click + mouse heatmaps** — rendered as an overlay on your live page, per viewport class (mobile/tablet/desktop)
+- **Outbound links, file downloads, form submits** (form id only — never field values)
+- **Scroll depth, time on page** (visible time, not wall-clock)
+- **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
+- **Realtime** — who's on the site right now
+
+Custom events when you need precision:
+
+```html
+<script>window.gm=window.gm||function(){(gm.q=gm.q||[]).push(arguments)}</script>
+```
+```js
+gm('pricing-viewed', { plan: 'pro' });
+```
+
+(The stub queues calls made before the tracker loads; drop it if you only call
+`gm()` from user interactions.)
 
 ## Install
 
 ```
 npm install meatlytics                          # once published to npm
-npm install github:GraphicMeat/meatlytics        # straight from GitHub, no publish needed
+npm install github:GraphicMeat/meatlytics       # straight from GitHub, no publish needed
 ```
 
 The GitHub install works as soon as the repo is pushed — npm's `prepare`
@@ -21,16 +53,8 @@ lifecycle script builds `dist/` automatically after cloning.
 For local development against a checkout on disk:
 
 ```json
-{
-  "dependencies": {
-    "meatlytics": "file:../analytics"
-  }
-}
+{ "dependencies": { "meatlytics": "file:../analytics" } }
 ```
-
-(swap the relative path for wherever you've checked this repo out.)
-
-Only runtime dependency: `better-sqlite3`.
 
 ## Quickstart
 
@@ -51,76 +75,100 @@ app.use(analytics({
 app.listen(3000);
 ```
 
-Mount it **before** your static file / catch-all routes so it can claim its
-own paths (`/gm.js`, `/gm/e`, `/_analytics`, `/gm/api/*`).
+Mount it **before** body parsers, static handlers, and catch-alls — it reads
+`/gm/e`'s raw body itself and claims its own paths (`/gm.js`, `/gm/e`,
+`/_analytics`, `/gm/api/*`), passing everything else through untouched.
 
-Add one script tag to every page you want tracked:
+Add one tag to every page you want tracked:
 
 ```html
 <script defer src="/gm.js" data-site="mysite"></script>
 ```
 
-`data-site` is optional — the tracker falls back to `location.hostname` if
-omitted — but set it explicitly when a hostname doesn't match your `siteId`
-(local dev, staging, multiple domains for one site, etc).
+`data-site` is optional — the tracker falls back to `location.hostname` — but
+set it when the hostname doesn't match your `siteId` (local dev, staging,
+multiple domains).
 
-Visit `/_analytics` and log in with `dashboardPassword` to see data.
+Visit `/_analytics`, log in with `dashboardPassword`. Done.
 
-## Options reference
+There's no Express dependency: the middleware is a plain `(req, res, next)`
+handler over `node:http`, so it composes with Express, or any router with the
+same middleware shape, or a bare `http.createServer`.
+
+## Options
 
 ```js
 analytics({
-  siteId,             // required. identifies rows in the (shared or per-site) DB
-  dbPath,             // required. path to the SQLite file (directory is created if missing)
-  dashboardPassword,  // required to use the dashboard. plain string, compared in constant time
-  apiKey,             // required to use /gm/api/* from outside the dashboard (hub pulls, scripts)
-  peers,              // optional. [{ name, url, apiKey }] — see "Hub mode" below
-  respectDNT,          // optional, default false. if true, tracker sends nothing when navigator.doNotTrack === '1'
+  siteId,             // required. identifies this site's rows in the DB
+  dbPath,             // required. SQLite file path (directory created if missing)
+  dashboardPassword,  // required for the dashboard. compared in constant time; login throttled (10 fails / 15 min / IP)
+  apiKey,             // required for /gm/api/* from outside the dashboard (hub pulls, scripts)
+  peers,              // optional. [{ name, url, apiKey }] — see Hub mode
+  respectDNT,         // optional, default false. if true, tracker no-ops when the browser signals Do Not Track
 })
 ```
 
-Returns Express-style middleware `(req, res, next)`. Two extra properties for
-tests/ops:
-
-- `middleware.store` — the underlying `Store` (SQLite handle + query helpers)
-- `middleware.stop()` — stops the flush timer and nightly rollup timer (call in tests/shutdown)
+Returns middleware with two extras for tests/ops: `middleware.store` (the
+SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 
 ### Routes it mounts
 
 | Route | Purpose | Auth |
 |---|---|---|
-| `GET /gm.js` | Tracker script (~1.6KB gzipped) | public |
+| `GET /gm.js` | Tracker script | public |
 | `POST /gm/e` | Collect endpoint | public, rate-limited, always 204 |
-| `GET /_analytics` | Dashboard | password login, session cookie |
-| `POST /_analytics/login` | Dashboard login | — |
-| `GET /gm/api/*` | JSON stats used by the dashboard/hub | `Authorization: Bearer <apiKey>` or dashboard session |
+| `GET /_analytics` | Dashboard | password login, HttpOnly session cookie |
+| `POST /_analytics/login` | Dashboard login | throttled |
+| `GET /gm-overlay.js` | Heatmap overlay module (lazy-loaded, dashboard preview only) | public |
+| `GET /gm/api/overview` | Totals + timeseries | Bearer `apiKey` or dashboard session |
+| `GET /gm/api/pages` | Top pages | " |
+| `GET /gm/api/sources` | Referrer classes, domains, campaigns | " |
+| `GET /gm/api/flows` | Session path chains | " |
+| `GET /gm/api/funnel` | Ad-hoc funnel: `?steps=/,/pricing,signup` | " |
+| `GET /gm/api/heatmap` | Click/mouse density per page + viewport | " (or short-lived overlay token) |
+| `GET /gm/api/realtime` | Active visitors, last 5 min | " |
+| `GET /gm/api/events` | Custom event counts | " |
+| `GET /gm/api/hub/overview` | All sites (local + peers) | " |
+
+All stats endpoints take `?from=YYYY-MM-DD&to=YYYY-MM-DD`.
 
 ## Privacy
 
-- **No cookies for visitors.** The only cookie set is the dashboard owner's
-  own login session, scoped to `/_analytics` — it has no consent implications
-  because it isn't set for site visitors.
-- **No localStorage, no fingerprinting.**
-- **Cookieless visitor identity:** `visitor = SHA256(dailySalt + ip + userAgent + siteId)`,
-  truncated to 16 bytes. The salt rotates at UTC midnight and the previous
-  day's salt is discarded — after 24 hours nobody, including the site owner,
-  can re-derive who was who from stored data.
-- **Raw IP and user-agent are never written to disk.** Only the derived hash is stored.
-  A session is the same visitor hash with less than a 30 minute gap between events.
-- **Zero third-party requests**, client or server — this is a build-gate
-  (`scripts/build.js` fails if `http(s)://` appears in the tracker or dashboard
-  bundle) as well as a design constraint.
-- **Retention:** raw events are kept 90 days, then deleted. Daily rollup
-  aggregates (`daily_stats`, `daily_sources`, `daily_events`) are kept forever
-  and are what long-range dashboard views fall back to.
-- **Bot traffic** is filtered by user-agent at collect time and never stored.
+Built to the Plausible/Fathom standard — stricter in places:
+
+- **No cookies, no localStorage, no fingerprinting** for visitors. The only
+  cookie is the dashboard owner's own login session, scoped to `/_analytics`.
+- **Cookieless identity:** `visitor = SHA256(dailySalt + ip + userAgent + siteId)`,
+  truncated to 16 bytes. The salt rotates at UTC midnight and the old salt is
+  discarded — after 24 hours nobody, including you, can re-derive who was who.
+- **Raw IP and user-agent never touch disk.** Used in memory for the hash and
+  rate limiting, then gone. A session = same hash, <30 min gap.
+- **Zero third-party requests**, enforced at build time: `scripts/build.js`
+  fails if an external URL appears in the tracker or dashboard bundle.
+- **Retention:** raw events 90 days, then pruned. Daily aggregates kept forever.
+- **Bots** filtered by user-agent at collect time, never stored.
+- **Form tracking records the form's id — never its values.**
+
+Because there are no cookies and no persistent identifiers, no cookie-consent
+banner is required. A short disclosure in your privacy policy is still good
+practice (not legal advice) — here's one you can paste:
+
+> **Analytics.** This site uses self-hosted, first-party analytics. All
+> analytics data is processed and stored on our own server and is never shared
+> with, or sent to, any third party. We do not use analytics cookies and we do
+> not store personal information. Visits are counted using an anonymous
+> identifier derived from your IP address and browser signature, hashed with a
+> secret key that is automatically deleted every 24 hours — after that,
+> re-identifying any visitor is impossible, even for us. Raw IP addresses and
+> browser signatures are never written to disk. What we record: pages viewed,
+> referring site, clicks, scrolling, and approximate time on page — in
+> aggregate, to understand which content works and to improve the site.
 
 ## Hub mode (multi-site dashboard)
 
-If you run meatlytics on more than one site, any one of them can act as a
-**hub**: its dashboard gets a site switcher (Local / each peer / All sites)
-that pulls the peers' overview stats server-side, so a peer's API key is
-only ever held by the hub's Node process — it's never sent to the browser.
+Run meatlytics on several sites; make any one of them the hub. Its dashboard
+gains a site switcher (Local / each peer / All sites) and pulls peer stats
+**server-side** — peer API keys never reach the browser.
 
 ```js
 app.use(analytics({
@@ -134,51 +182,60 @@ app.use(analytics({
 }));
 ```
 
-`peer.url` must be the origin the peer's own middleware is mounted on (it
-calls the peer's `GET /gm/api/overview` with `Authorization: Bearer <peer.apiKey>`).
-An unreachable or erroring peer shows up as `{ name, ok: false }` in the hub
-response — it never fails the whole request, and every other site's data is
-unaffected. Requests to peers time out after 5 seconds.
-
-The site switcher, peer, and "All sites" views are **overview-only** (totals +
-timeseries). Flows/funnels/heatmaps/realtime stay per-site — switch to
-"Local" (or open that peer's own `/_analytics` directly) for the deep views.
-
-Peer setup is symmetric: to make graphicmeat show up in mailvault's hub, add a
-`peers` entry for graphicmeat over on the mailvault side (and vice versa) —
-each side just needs the other's public URL + the API key it issued.
+`peer.url` is the origin the peer's middleware is mounted on. A dead peer
+returns `{ name, ok: false }` and never breaks the rest; peer requests time
+out after 5 s. Peer and "All sites" views are overview-only — flows, funnels,
+heatmaps, and realtime stay on each site's own dashboard. Setup is symmetric:
+add a mirror `peers` entry on the other side to hub from there too.
 
 ## Serving behind nginx (static-page sites)
 
-If your site's pages are served as static HTML by nginx rather than by the
-Node process itself (common for a marketing site with a small Node API
-alongside it), meatlytics still needs to be same-origin — the tracker posts to
-`/gm/e` with no CORS support by design (adding CORS would mean accepting
-cross-origin analytics writes, which this project deliberately does not do).
-Proxy meatlytics' paths straight through to the Node app in your existing
-server block:
+Pages served as static HTML by nginx, Node only running an API? meatlytics
+must stay same-origin — the tracker posts to `/gm/e` with no CORS by design
+(cross-origin analytics writes are deliberately not a feature). Proxy its
+paths to the Node process in your existing server block:
 
 ```nginx
-location = /gm.js       { proxy_pass http://127.0.0.1:3000; }
-location = /gm/e        { proxy_pass http://127.0.0.1:3000; }
+location = /gm.js         { proxy_pass http://127.0.0.1:3000; }
+location = /gm/e          { proxy_pass http://127.0.0.1:3000; }
 location = /gm-overlay.js { proxy_pass http://127.0.0.1:3000; }
-location = /_analytics  { proxy_pass http://127.0.0.1:3000; }
-location /_analytics/   { proxy_pass http://127.0.0.1:3000; }
-location /gm/api/       { proxy_pass http://127.0.0.1:3000; }
+location = /_analytics    { proxy_pass http://127.0.0.1:3000; }
+location /_analytics/     { proxy_pass http://127.0.0.1:3000; }
+location /gm/api/         { proxy_pass http://127.0.0.1:3000; }
 ```
 
-Put this block above your static `location / { root ...; }` block (nginx
-matches the most specific `location` first for exact matches like these, but
-keep it above any catch-all regex locations to be safe). Then the `<script>`
-tag on every static page stays a plain relative path:
+Keep this above any catch-all regex locations. The script tag on the static
+pages stays a plain relative `/gm.js`.
 
-```html
-<script defer src="/gm.js" data-site="yoursite"></script>
-```
+## How it stays fast
 
-## Testing
+- The tracker batches events in memory and flushes with `navigator.sendBeacon`
+  on tab-hide/close and every 15 s — near-zero network chatter, nothing lost
+  when the tab closes.
+- The collect endpoint does ~no synchronous work: validate, stamp, queue,
+  respond 204. A background flusher writes batches to SQLite (WAL mode) in
+  single transactions every 2 s.
+- Every dashboard asset is pre-built, gzipped, cached; the whole dashboard is
+  one HTML file with hand-drawn canvas charts.
+- Rollups + pruning run in-process nightly. No cron, no workers, no queue —
+  nothing to operate besides your existing Node process.
+
+## Development
 
 ```
 npm test          # node:test — unit + integration, no external services
-npm run build     # builds dist/gm.js and dist/dashboard.html, enforces size gates
+npm run build     # builds dist/gm.js + dist/dashboard.html, enforces size gates
 ```
+
+Size budgets are enforced by the build: tracker ≤ 3072 bytes gzipped,
+dashboard ≤ 60 KB raw. Design spec and implementation plan live in
+`docs/superpowers/`.
+
+## License
+
+AGPL-3.0. Free to use, self-host, and modify. If you distribute a modified
+version or offer it to others as a service, the AGPL requires you to publish
+your modifications under the same license.
+
+Need to embed meatlytics in a closed product without AGPL obligations?
+Commercial licenses are available - open an issue or contact GraphicMeat.
