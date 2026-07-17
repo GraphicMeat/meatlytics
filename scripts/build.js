@@ -15,6 +15,10 @@ const SRC = path.join(__dirname, "..", "src", "tracker", "gm.js");
 const OUT = path.join(__dirname, "..", "dist", "gm.js");
 const LIMIT = 3072;
 
+const DASH_SRC = path.join(__dirname, "..", "src", "dashboard", "index.html");
+const DASH_OUT = path.join(__dirname, "..", "dist", "dashboard.html");
+const DASH_LIMIT = 60 * 1024;
+
 function minify(src) {
   // Strip /* ... */ block comments. Source is written so no comment marker
   // ever appears inside a string or regex literal.
@@ -44,8 +48,31 @@ function build() {
   return { min, gzipSize: gz.length };
 }
 
-if (require.main === module) {
-  build();
+// Dashboard is authored as one self-contained HTML file (inline CSS/JS, no CDN).
+// "Build" = copy to dist + enforce the 60 KB budget. No inlining step needed.
+function buildDashboard() {
+  const html = fs.readFileSync(DASH_SRC, "utf8");
+  fs.mkdirSync(path.dirname(DASH_OUT), { recursive: true });
+  fs.writeFileSync(DASH_OUT, html);
+  const bytes = Buffer.byteLength(html, "utf8");
+  const gz = zlib.gzipSync(html, { level: 9 }).length;
+  console.log(
+    `dashboard.html: ${bytes} bytes raw, ${gz} bytes gzipped (limit ${DASH_LIMIT})`
+  );
+  if (/https?:\/\//.test(html)) {
+    console.error("FAIL: dashboard references an external http(s) host");
+    process.exitCode = 1;
+  }
+  if (bytes > DASH_LIMIT) {
+    console.error(`FAIL: dashboard.html ${bytes} exceeds ${DASH_LIMIT} byte budget`);
+    process.exitCode = 1;
+  }
+  return { bytes, gzipSize: gz };
 }
 
-module.exports = { minify, build, SRC, OUT, LIMIT };
+if (require.main === module) {
+  build();
+  buildDashboard();
+}
+
+module.exports = { minify, build, buildDashboard, SRC, OUT, LIMIT, DASH_OUT, DASH_LIMIT };

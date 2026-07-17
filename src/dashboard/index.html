@@ -1,0 +1,321 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>meatlytics</title>
+<style>
+:root{--bg:#0d0d0f;--panel:#16161a;--panel2:#1d1d22;--line:#2a2a30;--fg:#e8e8ea;--mut:#8b8b93;--acc:#e8451f;--ok:#3ecf8e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--acc)}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--fg);border-radius:7px;padding:6px 11px}
+button:hover{border-color:#3a3a44}
+button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+input,select{font:inherit;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:.5px}
+.brand b{color:var(--acc)}
+nav{display:flex;gap:4px}
+nav button{background:transparent;border:0;color:var(--mut);padding:6px 10px}
+nav button.on{color:var(--fg);background:var(--panel);border:0}
+.spacer{flex:1}
+.range{display:flex;gap:6px;align-items:center}
+.range .live{color:var(--ok);font-size:13px;margin-left:4px}
+main{padding:20px;max-width:1100px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+.card .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+.card .v{font-size:26px;font-weight:650;margin-top:4px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:16px;margin-bottom:16px}
+.panel h3{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);font-size:13px}
+th{color:var(--mut);font-weight:500}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{position:relative}
+.bar .fill{position:absolute;inset:0;background:rgba(232,69,31,.16);border-radius:4px}
+.bar span{position:relative}
+canvas{width:100%;display:block}
+.chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid var(--line)}
+.chain .step{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:13px}
+.chain .arw{color:var(--mut)}
+.chain .cnt{margin-left:auto;color:var(--mut);font-variant-numeric:tabular-nums}
+.fstep{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.fstep input{flex:1}
+.frow{margin:6px 0}
+.frow .meta{display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px}
+.frow .track{background:var(--panel2);border-radius:6px;height:26px;overflow:hidden}
+.frow .fill{background:var(--acc);height:100%;display:flex;align-items:center;padding:0 8px;color:#fff;font-size:12px;white-space:nowrap}
+.mut{color:var(--mut)}
+.hidden{display:none}
+#login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:10}
+#login form{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px;width:300px;text-align:center}
+#login h1{margin:0 0 4px;font-size:20px}#login h1 b{color:var(--acc)}
+#login p{color:var(--mut);margin:0 0 18px;font-size:13px}
+#login input{width:100%;margin-bottom:10px}
+#login button{width:100%}
+#login .err{color:var(--acc);font-size:13px;min-height:18px;margin-top:8px}
+iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+</style>
+
+<div id="login">
+  <form id="lf">
+    <h1>meat<b>lytics</b></h1>
+    <p>Dashboard login</p>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+    <button type="submit">Sign in</button>
+    <div class="err" id="lerr"></div>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+<header>
+  <span class="brand">meat<b>lytics</b></span>
+  <nav id="nav">
+    <button data-v="overview" class="on">Overview</button>
+    <button data-v="flows">Flows</button>
+    <button data-v="funnels">Funnels</button>
+    <button data-v="heatmaps">Heatmaps</button>
+    <button data-v="realtime">Realtime</button>
+  </nav>
+  <span class="spacer"></span>
+  <div class="range" id="range">
+    <button data-p="1">Day</button>
+    <button data-p="7" class="on">Week</button>
+    <button data-p="30">Month</button>
+    <input type="date" id="from"><input type="date" id="to">
+    <span class="live" id="live"></span>
+  </div>
+</header>
+<main>
+  <section id="v-overview"></section>
+  <section id="v-flows" class="hidden"></section>
+  <section id="v-funnels" class="hidden"></section>
+  <section id="v-heatmaps" class="hidden"></section>
+  <section id="v-realtime" class="hidden"></section>
+</main>
+</div>
+
+<script>
+var TOKEN = %TOKEN%;
+var $ = function(s,r){return (r||document).querySelector(s)};
+var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
+var state = {view:'overview', from:'', to:'', rtTimer:0};
+
+function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
+function pct(x){ return (x*100).toFixed(1)+'%'; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
+
+function api(path){
+  return fetch('/gm/api/'+path, {headers: TOKEN?{Authorization:'Bearer '+TOKEN}:{}}).then(function(r){
+    if(r.status===401){ showLogin(); throw new Error('unauth'); }
+    return r.json();
+  });
+}
+function qs(){ return 'from='+state.from+'&to='+state.to; }
+
+function showLogin(){ $('#app').classList.add('hidden'); $('#login').style.display='flex'; }
+function showApp(){ $('#login').style.display='none'; $('#app').classList.remove('hidden'); render(); }
+
+$('#lf').addEventListener('submit', function(e){
+  e.preventDefault();
+  fetch('/_analytics/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#pw').value})})
+    .then(function(r){return r.json()})
+    .then(function(d){ if(d.ok){ TOKEN=d.token; showApp(); } else { $('#lerr').textContent='Wrong password'; } })
+    .catch(function(){ $('#lerr').textContent='Error'; });
+});
+
+// range setup: default last 7 days
+function setRange(days){
+  var to=new Date(); var from=new Date(Date.now()-(days-1)*86400000);
+  state.to=to.toISOString().slice(0,10); state.from=from.toISOString().slice(0,10);
+  $('#from').value=state.from; $('#to').value=state.to;
+}
+$$('#range button').forEach(function(b){ b.onclick=function(){
+  $$('#range button').forEach(function(x){x.classList.remove('on')}); b.classList.add('on');
+  setRange(+b.dataset.p); render();
+};});
+$('#from').onchange=function(){ state.from=this.value; render(); };
+$('#to').onchange=function(){ state.to=this.value; render(); };
+
+$$('#nav button').forEach(function(b){ b.onclick=function(){
+  $$('#nav button').forEach(function(x){x.classList.remove('on')}); b.classList.add('on');
+  clearInterval(state.rtTimer);
+  state.view=b.dataset.v;
+  $$('main > section').forEach(function(s){s.classList.add('hidden')});
+  $('#v-'+state.view).classList.remove('hidden');
+  render();
+};});
+
+function render(){
+  if(state.view==='overview') renderOverview();
+  else if(state.view==='flows') renderFlows();
+  else if(state.view==='funnels') renderFunnels();
+  else if(state.view==='heatmaps') renderHeatmaps();
+  else if(state.view==='realtime') renderRealtime();
+  api('realtime').then(function(d){ $('#live').textContent='● '+d.active+' now'; }).catch(function(){});
+}
+
+// ---------- Overview ----------
+function renderOverview(){
+  var el=$('#v-overview');
+  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs())]).then(function(res){
+    var o=res[0], pg=res[1], sr=res[2];
+    el.innerHTML=
+      '<div class="cards">'+
+        card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
+        card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+
+      '</div>'+
+      '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
+      '<div class="grid2">'+
+        '<div class="panel"><h3>Top pages</h3>'+pagesTable(pg)+'</div>'+
+        '<div class="panel"><h3>Sources</h3>'+sourcesBlock(sr)+'</div>'+
+      '</div>';
+    drawTS(o.timeseries);
+  });
+}
+function card(k,v){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+function pagesTable(rows){
+  if(!rows.length) return '<p class="mut">No data</p>';
+  var max=rows[0].pageviews||1;
+  return '<table><tr><th>Path</th><th class="n">Views</th><th class="n">Visitors</th><th class="n">Avg</th></tr>'+
+    rows.slice(0,12).map(function(r){
+      return '<tr><td class="bar"><span class="fill" style="width:'+(r.pageviews/max*100)+'%"></span><span>'+esc(r.path)+'</span></td>'+
+        '<td class="n">'+r.pageviews+'</td><td class="n">'+r.visitors+'</td><td class="n">'+fmtDur(r.avgDuration)+'</td></tr>';
+    }).join('')+'</table>';
+}
+function sourcesBlock(s){
+  var out='<table><tr><th>Channel</th><th class="n">Visitors</th></tr>'+
+    s.classes.map(function(c){return '<tr><td>'+esc(c.ref_class)+'</td><td class="n">'+c.visitors+'</td></tr>'}).join('')+'</table>';
+  if(s.domains.length) out+='<h3 style="margin-top:14px">Referrers</h3><table>'+
+    s.domains.slice(0,8).map(function(d){return '<tr><td>'+esc(d.ref_domain)+'</td><td class="n">'+d.visitors+'</td></tr>'}).join('')+'</table>';
+  if(s.campaigns.length) out+='<h3 style="margin-top:14px">Campaigns</h3><table>'+
+    s.campaigns.slice(0,8).map(function(d){return '<tr><td>'+esc(d.utm_campaign)+' <span class="mut">'+esc(d.utm_source)+'</span></td><td class="n">'+d.visitors+'</td></tr>'}).join('')+'</table>';
+  return out;
+}
+function drawTS(data){
+  var c=$('#ts'); if(!c)return;
+  var dpr=window.devicePixelRatio||1, W=c.clientWidth, H=220;
+  c.width=W*dpr; c.height=H*dpr; var g=c.getContext('2d'); g.scale(dpr,dpr);
+  g.clearRect(0,0,W,H);
+  if(!data.length){ g.fillStyle='#8b8b93'; g.fillText('No data',10,20); return; }
+  var pad=28, cw=W-pad*2, ch=H-pad*2;
+  var max=1; data.forEach(function(d){ max=Math.max(max,d.pageviews); });
+  g.strokeStyle='#2a2a30'; g.lineWidth=1;
+  for(var i=0;i<=4;i++){ var y=pad+ch*i/4; g.beginPath();g.moveTo(pad,y);g.lineTo(W-pad,y);g.stroke();
+    g.fillStyle='#8b8b93';g.font='11px system-ui';g.fillText(Math.round(max*(1-i/4)),4,y+3); }
+  var n=data.length, bw=cw/n;
+  // pageview bars
+  data.forEach(function(d,i){
+    var h=d.pageviews/max*ch, x=pad+i*bw+bw*0.2, w=bw*0.6, y=pad+ch-h;
+    g.fillStyle='rgba(232,69,31,.5)'; g.fillRect(x,y,w,h);
+  });
+  // visitors line
+  g.strokeStyle='#3ecf8e'; g.lineWidth=2; g.beginPath();
+  data.forEach(function(d,i){
+    var x=pad+i*bw+bw/2, y=pad+ch-(d.visitors/max*ch);
+    i?g.lineTo(x,y):g.moveTo(x,y);
+  });
+  g.stroke();
+  g.fillStyle='#8b8b93';g.font='10px system-ui';
+  if(n>1){ g.fillText(data[0].date.slice(5),pad,H-8); g.fillText(data[n-1].date.slice(5),W-pad-24,H-8); }
+}
+
+// ---------- Flows ----------
+function renderFlows(){
+  var el=$('#v-flows');
+  el.innerHTML='<div class="panel"><div class="row"><h3 style="margin:0">Session flows</h3><span class="spacer"></span>'+
+    'Depth <select id="depth"><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></div>'+
+    '<div id="flowlist"><p class="mut">Loading…</p></div></div>';
+  $('#depth').onchange=loadFlows; loadFlows();
+}
+function loadFlows(){
+  api('flows?'+qs()+'&depth='+($('#depth')?$('#depth').value:3)).then(function(rows){
+    var max=rows.length?rows[0].count:1;
+    $('#flowlist').innerHTML=rows.length?rows.map(function(f){
+      return '<div class="chain">'+f.steps.map(function(s,i){
+        return (i?'<span class="arw">›</span>':'')+'<span class="step">'+esc(s)+'</span>';
+      }).join('')+'<span class="cnt">'+f.count+'</span></div>';
+    }).join(''):'<p class="mut">No sessions in range</p>';
+  });
+}
+
+// ---------- Funnels ----------
+var fsteps=[{t:'path',v:''},{t:'path',v:''}];
+function renderFunnels(){
+  var el=$('#v-funnels');
+  el.innerHTML='<div class="panel"><h3>Funnel builder</h3><div id="builder"></div>'+
+    '<div class="row"><button id="addstep">+ Step</button><button id="compute" class="on">Compute</button></div></div>'+
+    '<div class="panel"><h3>Result</h3><div id="fresult"><p class="mut">Add 2–6 steps and compute.</p></div></div>';
+  drawBuilder();
+  $('#addstep').onclick=function(){ if(fsteps.length<6){fsteps.push({t:'path',v:''});drawBuilder();} };
+  $('#compute').onclick=computeFunnel;
+}
+function drawBuilder(){
+  $('#builder').innerHTML=fsteps.map(function(s,i){
+    return '<div class="fstep"><select data-i="'+i+'" class="ft">'+
+      '<option value="path"'+(s.t==='path'?' selected':'')+'>Path</option>'+
+      '<option value="event"'+(s.t==='event'?' selected':'')+'>Event</option></select>'+
+      '<input data-i="'+i+'" class="fv" placeholder="'+(s.t==='path'?'/pricing':'signup')+'" value="'+esc(s.v)+'">'+
+      (fsteps.length>2?'<button data-i="'+i+'" class="fx">✕</button>':'')+'</div>';
+  }).join('');
+  $$('.ft').forEach(function(e){e.onchange=function(){fsteps[+e.dataset.i].t=e.value;drawBuilder();}});
+  $$('.fv').forEach(function(e){e.oninput=function(){fsteps[+e.dataset.i].v=e.value;}});
+  $$('.fx').forEach(function(e){e.onclick=function(){fsteps.splice(+e.dataset.i,1);drawBuilder();}});
+}
+function computeFunnel(){
+  var steps=fsteps.filter(function(s){return s.v}).map(function(s){return s.t+':'+s.v}).join(',');
+  if(fsteps.filter(function(s){return s.v}).length<2){ $('#fresult').innerHTML='<p class="mut">Need at least 2 filled steps.</p>'; return; }
+  api('funnel?'+qs()+'&steps='+encodeURIComponent(steps)).then(function(rows){
+    var base=rows.length?rows[0].entered:0;
+    $('#fresult').innerHTML=rows.map(function(r,i){
+      var w=base?(r.entered/base*100):0;
+      var drop=i<rows.length-1?(r.entered-r.converted):0;
+      return '<div class="frow"><div class="meta"><span>'+esc(r.step)+'</span><span>'+r.entered+' &middot; '+pct(r.rate)+'</span></div>'+
+        '<div class="track"><div class="fill" style="width:'+Math.max(w,3)+'%">'+r.entered+'</div></div>'+
+        (i<rows.length-1?'<div class="mut" style="font-size:12px;margin-top:2px">↓ '+drop+' dropped</div>':'')+'</div>';
+    }).join('');
+  });
+}
+
+// ---------- Heatmaps ----------
+function renderHeatmaps(){
+  var el=$('#v-heatmaps');
+  el.innerHTML='<div class="panel"><div class="row">'+
+    'Path <input id="hpath" placeholder="/" value="/" style="width:220px">'+
+    'Viewport <select id="hvw"><option value="desktop">Desktop</option><option value="tablet">Tablet</option><option value="mobile">Mobile</option></select>'+
+    '<button id="hopen" class="on">Open overlay</button>'+
+    '<span class="mut">Toggle clicks / mouse inside the frame.</span></div>'+
+    '<div id="hframe"></div></div>';
+  $('#hopen').onclick=openHeat;
+}
+function openHeat(){
+  var path=$('#hpath').value||'/', vw=$('#hvw').value;
+  var width=vw==='mobile'?375:vw==='tablet'?800:1200;
+  api('token').then(function(d){
+    var src=path+(path.indexOf('?')<0?'?':'&')+'gm-overlay='+encodeURIComponent(d.token);
+    $('#hframe').innerHTML='<iframe src="'+esc(src)+'" style="width:'+width+'px;max-width:100%"></iframe>';
+  });
+}
+
+// ---------- Realtime ----------
+function renderRealtime(){
+  var el=$('#v-realtime');
+  el.innerHTML='<div class="cards"><div class="card"><div class="k">Active now</div><div class="v" id="rtactive">–</div></div></div>'+
+    '<div class="panel"><h3>Current pages</h3><div id="rtpages"><p class="mut">Loading…</p></div></div>';
+  function poll(){
+    api('realtime').then(function(d){
+      $('#rtactive').textContent=d.active;
+      $('#rtpages').innerHTML=d.pages.length?'<table><tr><th>Path</th><th class="n">Active</th></tr>'+
+        d.pages.map(function(p){return '<tr><td>'+esc(p.path)+'</td><td class="n">'+p.n+'</td></tr>'}).join('')+'</table>':'<p class="mut">No active visitors</p>';
+    }).catch(function(){});
+  }
+  poll(); clearInterval(state.rtTimer); state.rtTimer=setInterval(poll,5000);
+}
+
+// ---------- boot ----------
+setRange(7);
+if(TOKEN){ showApp(); } else { showLogin(); }
+</script>

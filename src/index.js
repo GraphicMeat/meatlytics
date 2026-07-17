@@ -3,8 +3,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { openStore } = require('./store');
 const { createCollector } = require('./collect');
+const { createAuth } = require('./auth');
+const api = require('./api');
 
 const PLACEHOLDER_JS = '/* meatlytics: tracker not built yet (run `npm run build`) */\n';
+const DASH_MISSING = '<!doctype html><p>meatlytics: dashboard not built yet (run <code>npm run build</code>)</p>';
 const NIGHTLY_MS = 60 * 60 * 1000; // hourly tick; catch-up is idempotent
 
 function dateStr(ms) {
@@ -43,7 +46,41 @@ module.exports = function analytics(opts) {
   }
   const store = openStore(opts.dbPath);
   const collector = createCollector(store, opts);
+  const auth = createAuth(store, opts);
   const distGm = path.join(__dirname, '..', 'dist', 'gm.js');
+  const distDash = path.join(__dirname, '..', 'dist', 'dashboard.html');
+  const srcDash = path.join(__dirname, 'dashboard', 'index.html');
+  const overlayJs = path.join(__dirname, 'tracker', 'gm-overlay.js');
+
+  function readBody(req, cb) {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 16 * 1024) req.destroy();
+      else chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        cb(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        cb(null);
+      }
+    });
+    req.on('error', () => cb(null));
+  }
+
+  function serveFile(res, file, type, fallback) {
+    let body = fallback;
+    try {
+      if (fs.existsSync(file)) body = fs.readFileSync(file);
+    } catch {
+      /* fallback */
+    }
+    res.setHeader('Content-Type', type);
+    res.statusCode = 200;
+    res.end(body);
+  }
 
   try {
     runCatchup(store);
@@ -78,14 +115,39 @@ module.exports = function analytics(opts) {
       return res.end(body);
     }
 
-    // Phase 3 replaces these stubs.
-    if (m === 'GET' && p === '/_analytics') {
-      res.statusCode = 501;
-      return res.end('Not Implemented');
+    if (m === 'GET' && p === '/gm-overlay.js') {
+      return serveFile(res, overlayJs, 'application/javascript; charset=utf-8', '');
     }
+
+    if (m === 'POST' && p === '/_analytics/login') {
+      return readBody(req, (body) => auth.login(req, res, body));
+    }
+
+    // Dashboard shell (public). If the owner already has a valid session cookie,
+    // inject a fresh in-memory bearer so reloads don't force re-login.
+    if (m === 'GET' && p === '/_analytics') {
+      let html;
+      try {
+        html = fs.readFileSync(fs.existsSync(distDash) ? distDash : srcDash, 'utf8');
+      } catch {
+        html = DASH_MISSING;
+      }
+      const tok = auth.isSession(req) ? JSON.stringify(auth.makeSession()) : 'null';
+      html = html.replace('%TOKEN%', tok);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.statusCode = 200;
+      return res.end(html);
+    }
+
     if (p.startsWith('/gm/api/')) {
-      res.statusCode = 501;
-      return res.end('Not Implemented');
+      const url = new URL(req.url, 'http://localhost');
+      if (!auth.apiAllowed(req, url)) {
+        res.statusCode = 401;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end('{"error":"unauthorized"}');
+      }
+      return api.handle(req, res, url, { store, siteId: opts.siteId, auth });
     }
 
     if (next) return next();
@@ -95,6 +157,7 @@ module.exports = function analytics(opts) {
 
   mw.store = store;
   mw.collector = collector;
+  mw.auth = auth;
   mw.stop = () => {
     collector.stop();
     clearInterval(nightly);
