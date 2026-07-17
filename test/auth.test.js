@@ -84,6 +84,50 @@ test('secure cookie flag follows x-forwarded-proto', async () => {
   mw.stop();
 });
 
+test('magic link: good key redirects + sets a cookie that authenticates the dashboard', async () => {
+  const { mw, server } = makeApp();
+  const res = await request(server).get('/_analytics/login?key=' + KEY).expect(302);
+  assert.strictEqual(res.headers.location, '/_analytics');
+  const cookie = res.headers['set-cookie'][0];
+  assert.match(cookie, /^gm_dash=/);
+  assert.match(cookie, /Path=\/_analytics/);
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Strict/);
+
+  const dash = await request(server).get('/_analytics').set('Cookie', cookie).expect(200);
+  assert.doesNotMatch(dash.text, /var TOKEN = null;/, 'session cookie should authenticate, not fall back to null token');
+  mw.stop();
+});
+
+test('magic link: bad key is 401, no body oracle vs missing key', async () => {
+  const { mw, server } = makeApp();
+  const bad = await request(server).get('/_analytics/login?key=wrong').expect(401);
+  const missing = await request(server).get('/_analytics/login').expect(401);
+  assert.strictEqual(bad.text, missing.text);
+  mw.stop();
+});
+
+test('magic link: repeated bad keys throttle the IP; correct key from same IP refused while throttled; other IPs unaffected', async () => {
+  const { mw, server } = makeApp();
+  const ip = '3.3.3.3';
+  for (let i = 0; i < 10; i++) {
+    const res = await request(server)
+      .get('/_analytics/login?key=wrong')
+      .set('x-forwarded-for', ip);
+    assert.ok(res.status === 401 || res.status === 429, `attempt ${i + 1} got ${res.status}`);
+  }
+  await request(server)
+    .get('/_analytics/login?key=' + KEY)
+    .set('x-forwarded-for', ip)
+    .expect(429);
+
+  await request(server)
+    .get('/_analytics/login?key=' + KEY)
+    .set('x-forwarded-for', '4.4.4.4')
+    .expect(302);
+  mw.stop();
+});
+
 test('heat token: minted via GET /gm/api/token, works on heatmap, rejected on overview, tampered signature rejected', async () => {
   const { mw, server } = makeApp();
   const res = await request(server).get('/gm/api/token').set('Authorization', 'Bearer ' + KEY).expect(200);

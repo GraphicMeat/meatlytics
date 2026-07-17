@@ -75,12 +75,28 @@ function createAuth(store, opts) {
     if (fails.size > 10000) fails.clear();
   }
 
-  // POST /_analytics/login body {password}. Sets cookie + returns bearer token.
-  function login(req, res, body) {
-    const ip =
+  function ipOf(req) {
+    return (
       (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
       (req.socket && req.socket.remoteAddress) ||
-      '';
+      ''
+    );
+  }
+
+  function setSessionCookie(req, res) {
+    const tok = makeSession();
+    const https =
+      req.headers['x-forwarded-proto'] === 'https' || !!(req.socket && req.socket.encrypted);
+    res.setHeader(
+      'Set-Cookie',
+      `${COOKIE}=${encodeURIComponent(tok)}; Path=/_analytics; HttpOnly; SameSite=Strict${https ? '; Secure' : ''}; Max-Age=${SESSION_TTL_MS / 1000}`
+    );
+    return tok;
+  }
+
+  // POST /_analytics/login body {password}. Sets cookie + returns bearer token.
+  function login(req, res, body) {
+    const ip = ipOf(req);
     const pass = body && typeof body.password === 'string' ? body.password : '';
     const ok =
       !throttled(ip) && !!opts.dashboardPassword && timingEq(pass, opts.dashboardPassword);
@@ -91,15 +107,29 @@ function createAuth(store, opts) {
       return res.end('{"ok":false}');
     }
     fails.delete(ip);
-    const tok = makeSession();
-    const https =
-      req.headers['x-forwarded-proto'] === 'https' || !!(req.socket && req.socket.encrypted);
-    res.setHeader(
-      'Set-Cookie',
-      `${COOKIE}=${encodeURIComponent(tok)}; Path=/_analytics; HttpOnly; SameSite=Strict${https ? '; Secure' : ''}; Max-Age=${SESSION_TTL_MS / 1000}`
-    );
+    const tok = setSessionCookie(req, res);
     res.statusCode = 200;
     res.end(JSON.stringify({ ok: true, token: tok }));
+  }
+
+  // GET /_analytics/login?key=<apiKey>. Same throttle/fails map as password
+  // login (key attempts count as fails too). Redirects into the dashboard
+  // with a fresh session cookie on success -- for bookmarks/internal links.
+  function loginByKey(req, res, url) {
+    const ip = ipOf(req);
+    const key = (url.searchParams.get('key') || '').toString();
+    const ok = !throttled(ip) && !!opts.apiKey && timingEq(key, opts.apiKey);
+    if (!ok) {
+      recordFail(ip);
+      res.statusCode = throttled(ip) ? 429 : 401;
+      res.setHeader('Content-Type', 'application/json');
+      return res.end('{"ok":false}');
+    }
+    fails.delete(ip);
+    setSessionCookie(req, res);
+    res.statusCode = 302;
+    res.setHeader('Location', '/_analytics');
+    res.end();
   }
 
   // Guard for /gm/api/*. Accepts: Bearer apiKey, Bearer session token, valid
@@ -113,7 +143,7 @@ function createAuth(store, opts) {
     return false;
   }
 
-  return { login, isSession, apiAllowed, makeSession, makeHeatToken };
+  return { login, loginByKey, isSession, apiAllowed, makeSession, makeHeatToken };
 }
 
 module.exports = { createAuth, timingEq };

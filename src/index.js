@@ -123,6 +123,10 @@ module.exports = function analytics(opts) {
       return readBody(req, (body) => auth.login(req, res, body));
     }
 
+    if (m === 'GET' && p === '/_analytics/login') {
+      return auth.loginByKey(req, res, new URL(req.url, 'http://localhost'));
+    }
+
     // Dashboard shell (public). If the owner already has a valid session cookie,
     // inject a fresh in-memory bearer so reloads don't force re-login.
     if (m === 'GET' && p === '/_analytics') {

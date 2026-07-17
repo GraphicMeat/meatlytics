@@ -91,6 +91,10 @@ multiple domains).
 
 Visit `/_analytics`, log in with `dashboardPassword`. Done.
 
+**Direct login link:** `GET /_analytics/login?key=<apiKey>` — logs straight into the
+dashboard (302 + session cookie), for bookmarks or internal dashboards. Same
+brute-force throttle as password login. Treat the URL as a secret.
+
 There's no Express dependency: the middleware is a plain `(req, res, next)`
 handler over `node:http`, so it composes with Express, or any router with the
 same middleware shape, or a bare `http.createServer`.
@@ -119,6 +123,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `POST /gm/e` | Collect endpoint | public, rate-limited, always 204 |
 | `GET /_analytics` | Dashboard | password login, HttpOnly session cookie |
 | `POST /_analytics/login` | Dashboard login | throttled |
+| `GET /_analytics/login?key=` | Direct login link (magic link) via `apiKey` | throttled |
 | `GET /gm-overlay.js` | Heatmap overlay module (lazy-loaded, dashboard preview only) | public |
 | `GET /gm/api/overview` | Totals + timeseries | Bearer `apiKey` or dashboard session |
 | `GET /gm/api/pages` | Top pages | " |
