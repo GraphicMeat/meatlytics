@@ -463,8 +463,8 @@ function renderOverview(){
     });
     return;
   }
-  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []})]).then(function(res){
-    var o=res[0], pg=res[1], sr=res[2], co=res[3]||[];
+  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []}), api('platforms?'+qs()).catch(function(){return null})]).then(function(res){
+    var o=res[0], pg=res[1], sr=res[2], co=res[3]||[], pl=res[4];
     el.innerHTML=
       '<div class="cards">'+
         card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
@@ -475,7 +475,8 @@ function renderOverview(){
       '<div class="grid2">'+
         '<div class="panel"><h3>Top pages</h3>'+pagesTable(pg)+'</div>'+
         '<div class="panel"><h3>Sources</h3>'+sourcesBlock(sr)+'</div>'+
-      '</div>';
+      '</div>'+
+      '<div class="panel"><h3>Platforms</h3><div class="grid2">'+platformsBlock(pl)+'</div></div>';
     drawTS(o.timeseries);
     renderMap($('#cmap'), co.filter(function(r){return r.country}).map(function(r){return {country:r.country,n:r.visitors}}), 'choropleth');
   });
@@ -498,6 +499,18 @@ function sourcesBlock(s){
   if(s.campaigns.length) out+='<h3 style="margin-top:14px">Campaigns</h3><table>'+
     s.campaigns.slice(0,8).map(function(d){return '<tr><td>'+esc(d.utm_campaign)+' <span class="mut">'+esc(d.utm_source)+'</span></td><td class="n">'+d.visitors+'</td></tr>'}).join('')+'</table>';
   return out;
+}
+function platformsBlock(p){
+  if(!p) return '<p class="mut">No data</p>';
+  function list(title,rows){
+    if(!rows||!rows.length) return '<div><h3 style="margin:0 0 6px">'+title+'</h3><p class="mut">No data</p></div>';
+    var max=rows[0].visitors||1;
+    return '<div><h3 style="margin:0 0 6px">'+title+'</h3><table>'+
+      rows.slice(0,10).map(function(r){
+        return '<tr><td class="bar"><span class="fill" style="width:'+(r.visitors/max*100)+'%"></span><span>'+esc(r.name)+'</span></td><td class="n">'+r.visitors+'</td></tr>';
+      }).join('')+'</table></div>';
+  }
+  return list('Browser',p.browsers)+list('OS',p.os)+list('Device',p.devices)+list('Language',p.langs);
 }
 function drawTS(data){
   var c=$('#ts'); if(!c)return;

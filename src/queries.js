@@ -271,6 +271,20 @@ function countries(db, opts) {
     .all(p);
 }
 
+function platforms(db, opts) {
+  const { from, to } = range(opts);
+  const p = { siteId: opts.siteId, from, to };
+  const dim = (col) =>
+    db
+      .prepare(
+        `SELECT ${col} name, COUNT(DISTINCT visitor) visitors
+         FROM events WHERE ${pvWhere()} AND ${col} IS NOT NULL AND ${col}<>''
+         GROUP BY ${col} ORDER BY visitors DESC LIMIT 20`
+      )
+      .all(p);
+  return { browsers: dim('browser'), os: dim('os'), devices: dim('device'), langs: dim('lang') };
+}
+
 function eventsList(db, opts) {
   const { from, to } = range(opts);
   return db
@@ -283,4 +297,4 @@ function eventsList(db, opts) {
     .all({ siteId: opts.siteId, from, to });
 }
 
-module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, range, vwClause };
+module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, platforms, range, vwClause };

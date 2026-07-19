@@ -9,6 +9,7 @@ const EVENT_COLS = [
   'ts', 'site_id', 'visitor', 'session_id', 'type', 'path', 'name', 'props_json',
   'ref_domain', 'ref_class', 'utm_source', 'utm_medium', 'utm_campaign',
   'x_pct', 'y_pct', 'viewport_w', 'doc_h', 'value_int', 'country',
+  'browser', 'os', 'device', 'lang',
 ];
 
 const SCHEMA = `
@@ -32,7 +33,11 @@ CREATE TABLE IF NOT EXISTS events(
   viewport_w INTEGER,
   doc_h INTEGER,
   value_int INTEGER,
-  country TEXT
+  country TEXT,
+  browser TEXT,
+  os TEXT,
+  device TEXT,
+  lang TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_site_ts ON events(site_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -58,6 +63,11 @@ CREATE TABLE IF NOT EXISTS daily_countries(
   visitors INTEGER,
   PRIMARY KEY(date, site_id, country)
 );
+CREATE TABLE IF NOT EXISTS daily_platforms(
+  date TEXT, site_id TEXT, browser TEXT, os TEXT, device TEXT, lang TEXT,
+  visitors INTEGER,
+  PRIMARY KEY(date, site_id, browser, os, device, lang)
+);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, val TEXT);
 CREATE TABLE IF NOT EXISTS sessions(visitor TEXT PRIMARY KEY, session_id TEXT, last_ts INTEGER);
 CREATE TABLE IF NOT EXISTS passkeys(
@@ -80,10 +90,12 @@ class Store {
     this.db.pragma('synchronous = NORMAL');
     this.db.exec(SCHEMA);
 
-    // migration: pre-existing DBs created before `country` existed need it added
+    // migration: pre-existing DBs created before these columns existed need them added
     // (CREATE TABLE IF NOT EXISTS above is a no-op once the table already exists).
-    const hasCountry = this.db.prepare("PRAGMA table_info(events)").all().some((c) => c.name === 'country');
-    if (!hasCountry) this.db.exec('ALTER TABLE events ADD COLUMN country TEXT');
+    const have = new Set(this.db.prepare("PRAGMA table_info(events)").all().map((c) => c.name));
+    for (const col of ['country', 'browser', 'os', 'device', 'lang']) {
+      if (!have.has(col)) this.db.exec(`ALTER TABLE events ADD COLUMN ${col} TEXT`);
+    }
 
     this._insert = this.db.prepare(
       `INSERT INTO events (${EVENT_COLS.join(',')}) VALUES (${EVENT_COLS.map((c) => '@' + c).join(',')})`
@@ -105,6 +117,7 @@ class Store {
       db.prepare('DELETE FROM daily_sources WHERE date=?').run(date);
       db.prepare('DELETE FROM daily_events WHERE date=?').run(date);
       db.prepare('DELETE FROM daily_countries WHERE date=?').run(date);
+      db.prepare('DELETE FROM daily_platforms WHERE date=?').run(date);
 
       db.prepare(
         `INSERT INTO daily_stats(date, site_id, path, visitors, pageviews, total_duration, bounces)
@@ -161,6 +174,16 @@ class Store {
          SELECT ?, site_id, COALESCE(country,''), COUNT(DISTINCT visitor)
          FROM events WHERE type='pageview' AND ${DATE_EXPR}=?
          GROUP BY site_id, COALESCE(country,'')`
+      ).run(date, date);
+
+      db.prepare(
+        `INSERT INTO daily_platforms(date, site_id, browser, os, device, lang, visitors)
+         SELECT ?, site_id,
+           COALESCE(browser,''), COALESCE(os,''), COALESCE(device,''), COALESCE(lang,''),
+           COUNT(DISTINCT visitor)
+         FROM events WHERE type='pageview' AND ${DATE_EXPR}=?
+         GROUP BY site_id, COALESCE(browser,''), COALESCE(os,''),
+                  COALESCE(device,''), COALESCE(lang,'')`
       ).run(date, date);
     })();
   }

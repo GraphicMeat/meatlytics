@@ -30,6 +30,39 @@ function classifyRef(refUrl) {
   return { domain, cls: 'other' };
 }
 
+// ponytail: iPadOS Safari masquerades as Macintosh -> counted macOS desktop; unfixable server-side.
+function parseUA(ua) {
+  const s = typeof ua === 'string' ? ua : '';
+  let os = null;
+  if (/Windows/.test(s)) os = 'Windows';
+  else if (/iPhone|iPad|iPod/.test(s)) os = 'iOS';
+  else if (/Macintosh|Mac OS X/.test(s)) os = 'macOS';
+  else if (/Android/.test(s)) os = 'Android';
+  else if (/CrOS/.test(s)) os = 'ChromeOS';
+  else if (/Linux/.test(s)) os = 'Linux';
+
+  let browser = null;
+  if (/Edg\/|EdgiOS\//.test(s)) browser = 'Edge';
+  else if (/OPR\//.test(s)) browser = 'Opera';
+  else if (/SamsungBrowser\//.test(s)) browser = 'Samsung Internet';
+  else if (/Firefox\/|FxiOS\//.test(s)) browser = 'Firefox';
+  else if (/Chrome\/|CriOS\//.test(s)) browser = 'Chrome';
+  else if (/Safari\//.test(s)) browser = 'Safari';
+
+  let device = 'desktop';
+  if (/iPad/.test(s) || (/Android/.test(s) && !/Mobile/.test(s))) device = 'tablet';
+  else if (/iPhone|iPod/.test(s) || /Mobile/.test(s)) device = 'mobile';
+
+  return { browser, os, device };
+}
+
+// First primary subtag of Accept-Language, lowercased, max 8 chars; null if absent/garbage.
+function parseLang(header) {
+  if (typeof header !== 'string') return null;
+  const primary = header.split(',')[0].split(';')[0].split('-')[0].trim().toLowerCase();
+  return /^[a-z]+$/.test(primary) ? primary.slice(0, 8) : null;
+}
+
 // IP -> ISO-2 country, uppercase; null on failure or private/unresolvable IP.
 // Never stores the IP itself (see identity.js) — resolved once at ingest time.
 function resolveCountry(ip) {
@@ -58,6 +91,10 @@ function mapEvent(ev, stamp) {
     visitor: stamp.visitor,
     session_id: stamp.session,
     country: stamp.country,
+    browser: stamp.browser,
+    os: stamp.os,
+    device: stamp.device,
+    lang: stamp.lang,
     type: t,
     path: str(ev.p, 512),
     name: null,
@@ -118,7 +155,7 @@ function createCollector(store, opts) {
     return true;
   }
 
-  function ingest(body, ip, ua) {
+  function ingest(body, ip, ua, lang) {
     if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
     const ts = Date.now();
     const dateStr = new Date(ts).toISOString().slice(0, 10);
@@ -126,7 +163,8 @@ function createCollector(store, opts) {
     const visitor = visitorHash({ salt, ip, ua, siteId });
     const session = resolveSession(store.db, visitor, ts);
     const country = resolveCountry(ip);
-    const stamp = { ts, siteId, visitor, session, country };
+    const plat = parseUA(ua);
+    const stamp = { ts, siteId, visitor, session, country, browser: plat.browser, os: plat.os, device: plat.device, lang: parseLang(lang) };
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
       const row = mapEvent(ev, stamp);
       if (row) queue.push(row);
@@ -140,6 +178,7 @@ function createCollector(store, opts) {
       res.end();
     };
     const ua = req.headers['user-agent'] || '';
+    const lang = req.headers['accept-language'];
     const xff = req.headers['x-forwarded-for'];
     const ip = (xff ? String(xff).split(',')[0].trim() : '') || req.socket.remoteAddress || '';
 
@@ -169,7 +208,7 @@ function createCollector(store, opts) {
         return done();
       }
       try {
-        ingest(body, ip, ua);
+        ingest(body, ip, ua, lang);
       } catch {
         /* drop */
       }
@@ -205,4 +244,4 @@ function createCollector(store, opts) {
   return { middleware, flush, stop };
 }
 
-module.exports = { createCollector, classifyRef, mapEvent, resolveCountry };
+module.exports = { createCollector, classifyRef, mapEvent, resolveCountry, parseUA, parseLang };

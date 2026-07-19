@@ -76,6 +76,23 @@ test('rollupDay: daily_countries groups pageview visitors by country, unknown as
   store.close();
 });
 
+test('rollupDay: daily_platforms groups pageview visitors by browser/os/device/lang, unknown as empty string', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(DAY, '10:00'), site_id: SITE, visitor: 'A', session_id: 's1', type: 'pageview', path: '/', browser: 'Chrome', os: 'Windows', device: 'desktop', lang: 'en' },
+    { ts: at(DAY, '10:05'), site_id: SITE, visitor: 'B', session_id: 's2', type: 'pageview', path: '/', browser: 'Chrome', os: 'Windows', device: 'desktop', lang: 'en' },
+    { ts: at(DAY, '11:00'), site_id: SITE, visitor: 'C', session_id: 's3', type: 'pageview', path: '/', browser: null, os: null, device: null, lang: null },
+  ]);
+  store.rollupDay(DAY);
+  const rows = store.db.prepare('SELECT * FROM daily_platforms WHERE date=?').all(DAY);
+  const chrome = rows.find((r) => r.browser === 'Chrome');
+  const unknown = rows.find((r) => r.browser === '');
+  assert.strictEqual(chrome.visitors, 2);
+  assert.strictEqual(chrome.os, 'Windows');
+  assert.strictEqual(unknown.visitors, 1);
+  store.close();
+});
+
 test('migration: pre-existing DB without `country` column gets it added via ALTER TABLE', () => {
   const dbPath = tmpDbPath();
   // Simulate a DB created before `country` existed (pre-migration schema).

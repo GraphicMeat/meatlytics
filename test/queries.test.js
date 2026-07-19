@@ -192,6 +192,25 @@ test('realtime: countries field counts distinct active visitors per country in w
   store.close();
 });
 
+test('platforms: browsers/os/devices/langs distinct visitors DESC, blanks excluded', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(D2, '10:00'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'pageview', path: '/', browser: 'Chrome', os: 'Windows', device: 'desktop', lang: 'en' },
+    { ts: at(D2, '10:01'), site_id: SITE, visitor: 'B', session_id: 'sB', type: 'pageview', path: '/', browser: 'Chrome', os: 'macOS', device: 'desktop', lang: 'en' },
+    { ts: at(D2, '10:02'), site_id: SITE, visitor: 'C', session_id: 'sC', type: 'pageview', path: '/', browser: 'Safari', os: 'iOS', device: 'mobile', lang: 'fr' },
+    { ts: at(D2, '10:03'), site_id: SITE, visitor: 'D', session_id: 'sD', type: 'pageview', path: '/', browser: null, os: null, device: null, lang: null },
+  ]);
+  const pl = Q.platforms(store.db, RANGE);
+  assert.deepStrictEqual(pl.browsers[0], { name: 'Chrome', visitors: 2 });
+  assert.ok(pl.browsers.some((r) => r.name === 'Safari' && r.visitors === 1));
+  assert.ok(!pl.browsers.some((r) => r.name === '' || r.name === null), 'blank/unknown excluded');
+  assert.deepStrictEqual(pl.devices[0], { name: 'desktop', visitors: 2 });
+  const langs = Object.fromEntries(pl.langs.map((r) => [r.name, r.visitors]));
+  assert.strictEqual(langs.en, 2);
+  assert.strictEqual(langs.fr, 1);
+  store.close();
+});
+
 test('eventsList: custom event counts + uniques', () => {
   const store = openStore(tmpDbPath());
   seed(store);

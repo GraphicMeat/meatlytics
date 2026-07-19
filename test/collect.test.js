@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const request = require('supertest');
 const analytics = require('../src/index');
+const { parseUA, parseLang } = require('../src/collect');
 const { tmpDbPath, dumpAll } = require('./helpers');
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
@@ -22,6 +23,42 @@ function makeApp() {
 function rowCount(mw) {
   return mw.store.db.prepare('SELECT COUNT(*) c FROM events').get().c;
 }
+
+test('parseUA: browser/os/device across representative user agents', () => {
+  const cases = [
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      { browser: 'Chrome', os: 'macOS', device: 'desktop' }],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+      { browser: 'Firefox', os: 'Windows', device: 'desktop' }],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36 Edg/120.0',
+      { browser: 'Edge', os: 'Windows', device: 'desktop' }],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      { browser: 'Safari', os: 'iOS', device: 'mobile' }],
+    ['Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/604.1',
+      { browser: 'Safari', os: 'iOS', device: 'tablet' }],
+    ['Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+      { browser: 'Chrome', os: 'Android', device: 'mobile' }],
+    ['Mozilla/5.0 (Linux; Android 13; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      { browser: 'Chrome', os: 'Android', device: 'tablet' }],
+    ['Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      { browser: 'Chrome', os: 'Linux', device: 'desktop' }],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0 Mobile/15E148 Safari/604.1',
+      { browser: 'Chrome', os: 'iOS', device: 'mobile' }],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121.0 Mobile/15E148 Safari/605.1.15',
+      { browser: 'Firefox', os: 'iOS', device: 'mobile' }],
+    ['', { browser: null, os: null, device: 'desktop' }],
+  ];
+  for (const [ua, want] of cases) {
+    assert.deepStrictEqual(parseUA(ua), want, ua);
+  }
+});
+
+test('parseLang: primary subtag, lowercased; null on garbage', () => {
+  assert.strictEqual(parseLang('en-GB,en;q=0.9'), 'en');
+  assert.strictEqual(parseLang('fr'), 'fr');
+  assert.strictEqual(parseLang(undefined), null);
+  assert.strictEqual(parseLang('*'), null);
+});
 
 test('valid batch -> 204, rows appear after flush', async () => {
   const { mw, server } = makeApp();
