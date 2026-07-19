@@ -131,6 +131,38 @@ test('setup: code is single-use / dead after first passkey registered', async ()
   mw.stop();
 });
 
+// --- invite codes ------------------------------------------------------------
+
+test('invite: session mints code, second admin registers with it, single-use', async () => {
+  const { mw, server, setupCode } = makeAppCapturingSetupCode();
+  const first = await doRegister(server, { setupCode });
+  assert.strictEqual(first.regRes.status, 200);
+  const cookie = first.regRes.headers['set-cookie'][0].split(';')[0];
+
+  // no session -> 401
+  const denied = await request(server).post('/_analytics/api/passkeys/invite').set('Host', HOST).send({});
+  assert.strictEqual(denied.status, 401);
+
+  const inv = await request(server)
+    .post('/_analytics/api/passkeys/invite')
+    .set('Host', HOST)
+    .set('Cookie', cookie)
+    .send({});
+  assert.strictEqual(inv.status, 200);
+  assert.ok(inv.body.code, 'returns invite code');
+
+  // second admin registers with the invite code, no session, gets logged in
+  const second = await doRegister(server, { setupCode: inv.body.code });
+  assert.strictEqual(second.regRes.status, 200);
+  assert.ok(second.regRes.body.token, 'invite registration returns token');
+  assert.match(second.regRes.headers['set-cookie'][0], /^gm_dash=/);
+
+  // code is single-use
+  const third = await doRegister(server, { setupCode: inv.body.code });
+  assert.strictEqual(third.optsRes.status, 401);
+  mw.stop();
+});
+
 // --- full passkey login flow -------------------------------------------------
 
 test('passkey login: auth-options -> authenticate -> 200 + session cookie', async () => {

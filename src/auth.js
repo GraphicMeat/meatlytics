@@ -180,12 +180,30 @@ function createAuth(store, opts) {
       `[meatlytics] ${opts.siteId}: no passkey registered — open /_analytics?setup=${setupCode} on the dashboard origin to register one`
     );
   }
-  function checkSetupCode(code) {
-    if (!setupCode || store.passkeyCount() !== 0) return false;
-    return typeof code === 'string' && timingEq(code, setupCode);
+
+  // --- invite codes: minted by a logged-in session so another admin/device
+  // can register a passkey via the same ?setup= link flow. 15-min TTL,
+  // deleted on successful registration (failed attempts hit the throttle).
+
+  const INVITE_TTL_MS = 15 * 60 * 1000;
+  const invites = new Map(); // code -> exp
+  function newInvite() {
+    for (const [c, e] of invites) if (e <= Date.now()) invites.delete(c);
+    const code = crypto.randomBytes(16).toString('hex');
+    invites.set(code, Date.now() + INVITE_TTL_MS);
+    return code;
   }
-  function clearSetupCode() {
+
+  function checkSetupCode(code) {
+    if (typeof code !== 'string') return false;
+    const exp = invites.get(code);
+    if (exp && exp > Date.now()) return true;
+    if (!setupCode || store.passkeyCount() !== 0) return false;
+    return timingEq(code, setupCode);
+  }
+  function clearSetupCode(code) {
     setupCode = null;
+    if (typeof code === 'string') invites.delete(code);
   }
 
   const auth = {
@@ -203,6 +221,7 @@ function createAuth(store, opts) {
     takeChallenge,
     checkSetupCode,
     clearSetupCode,
+    newInvite,
     rotateApiKey,
     apiKey,
     apiKeyOverridden,

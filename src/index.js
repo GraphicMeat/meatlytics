@@ -279,12 +279,17 @@ module.exports = function analytics(opts) {
           name: (body.name || '').toString().slice(0, 64),
         });
         if (gate.viaSetupCode) {
-          auth.clearSetupCode();
+          auth.clearSetupCode(body.setupCode);
           const tok = auth.setSessionCookie(req, res);
           return sendJson(res, { ok: true, token: tok });
         }
         sendJson(res, { ok: true });
       });
+    }
+
+    if (m === 'POST' && p === '/_analytics/api/passkeys/invite') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return sendJson(res, { code: auth.newInvite() });
     }
 
     if (m === 'GET' && p === '/_analytics/api/passkeys') {

@@ -76,7 +76,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <div id="lsetupmsg" class="hidden"><p class="mut">No passkey registered yet. Check the server boot log for a one-time setup link, then open it in this browser.</p></div>
     <div id="lsetup" class="hidden">
       <input id="setupname" placeholder="Passkey name" value="Owner">
-      <button type="button" id="lsetup-btn">Register first passkey</button>
+      <button type="button" id="lsetup-btn">Register passkey</button>
     </div>
     <div class="err" id="lerr"></div>
   </div>
@@ -88,6 +88,13 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <h3>Passkeys</h3>
     <div id="pklist"><p class="mut">Loading…</p></div>
     <button type="button" id="addpk">Add passkey</button>
+    <div id="invitebox" class="hidden">
+      <div class="row" style="margin-top:8px">
+        <input id="inviteurl" readonly style="flex:1" value="">
+        <button type="button" id="copyinvite">Copy</button>
+      </div>
+      <p class="mut">Open this link on any device to register a new passkey. Valid 15 minutes, single use.</p>
+    </div>
     <h3 style="margin-top:16px">API key</h3>
     <div class="row">
       <input id="apikeyval" readonly style="flex:1" value="">
@@ -288,7 +295,7 @@ function bootLogin(){
   var setupCode=new URL(location.href).searchParams.get('setup');
   if(setupCode){
     $('#lsignin').classList.add('hidden');
-    $('#lsub').textContent='Set up your first passkey';
+    $('#lsub').textContent='Register a passkey';
     $('#lsetup').classList.remove('hidden');
     $('#lsetup-btn').onclick=function(){ doSetup(setupCode); };
   } else {
@@ -336,12 +343,14 @@ $('#gear').onclick=function(){ $('#settings').classList.remove('hidden'); loadSe
 $('#closeSettings').onclick=function(){ $('#settings').classList.add('hidden'); };
 $('#addpk').onclick=function(){
   $('#serr').textContent='';
-  var name=prompt('Name this passkey:','Passkey');
-  if(name==null) return;
-  registerPasskey(name, null).then(function(r){
-    if(r.body && r.body.ok) loadSettings();
-    else $('#serr').textContent='Registration failed';
-  }).catch(function(e){ $('#serr').textContent=(e&&e.name==='NotAllowedError')?'Cancelled':'Error'; });
+  call('POST','/_analytics/api/passkeys/invite',{}).then(function(r){
+    if(!r.body || !r.body.code){ $('#serr').textContent='Error'; return; }
+    $('#inviteurl').value=location.origin+location.pathname+'?setup='+r.body.code;
+    $('#invitebox').classList.remove('hidden');
+  });
+};
+$('#copyinvite').onclick=function(){
+  try{ navigator.clipboard.writeText($('#inviteurl').value); }catch(e){}
 };
 $('#revealkey').onclick=function(){
   if($('#apikeyval').value===apiKeyFull){ $('#apikeyval').value=mask(apiKeyFull); $('#revealkey').textContent='Reveal'; }
@@ -614,5 +623,7 @@ function renderRealtime(){
 
 // ---------- boot ----------
 setRange(7);
-if(TOKEN){ showApp(); } else { showLogin(); }
+// ?setup= link wins over an existing session so a logged-in device can still
+// register an additional passkey via an invite link.
+if(TOKEN && !new URL(location.href).searchParams.get('setup')){ showApp(); } else { showLogin(); }
 </script>
