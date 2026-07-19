@@ -10,7 +10,7 @@ client or the backend. That's a build gate, not a promise.
 ```
 tracker         1.6 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
 dashboard       6.3 KB gzipped   single self-contained HTML file, no framework
-dependencies    1                (better-sqlite3)
+dependencies    2                (better-sqlite3, geoip-country)
 collect
 throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
 ```
@@ -26,7 +26,8 @@ Add one script tag. No configuration, no event wiring:
 - **Outbound links, file downloads, form submits** (form id only — never field values)
 - **Scroll depth, time on page** (visible time, not wall-clock)
 - **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
-- **Realtime** — who's on the site right now
+- **Countries** — visitor country per date range + live world map, resolved offline at ingest from a bundled IP database (no external geo API, IP still never stored)
+- **Realtime** — who's on the site right now, with a pulsing world map
 
 Custom events when you need precision:
 
@@ -165,6 +166,8 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/heatmap` | Click/mouse density per page + viewport | " (or short-lived overlay token) |
 | `GET /gm/api/realtime` | Active visitors, last 5 min | " |
 | `GET /gm/api/events` | Custom event counts | " |
+| `GET /gm/api/countries` | Visitors per country | " |
+| `GET /gm/world.svg` | World map asset for the dashboard | public |
 | `GET /gm/api/hub/overview` | All sites (local + peers) | " |
 
 All stats endpoints take `?from=YYYY-MM-DD&to=YYYY-MM-DD`.
@@ -232,15 +235,21 @@ paths to the Node process in your existing server block:
 
 ```nginx
 location = /gm.js         { proxy_pass http://127.0.0.1:3000; }
-location = /gm/e          { proxy_pass http://127.0.0.1:3000; }
 location = /gm-overlay.js { proxy_pass http://127.0.0.1:3000; }
+location /gm/             { proxy_pass http://127.0.0.1:3000; }
 location = /_analytics    { proxy_pass http://127.0.0.1:3000; }
 location /_analytics/     { proxy_pass http://127.0.0.1:3000; }
-location /gm/api/         { proxy_pass http://127.0.0.1:3000; }
 ```
 
-Keep this above any catch-all regex locations. The script tag on the static
-pages stays a plain relative `/gm.js`.
+Proxy the whole `/gm/` prefix — don't enumerate subpaths. An enumerated list
+goes stale the moment an update adds an asset (e.g. `/gm/world.svg`), and with
+an `/index.html` catch-all below it the failure is silent: the dashboard gets
+your homepage instead of a 404. Keep these above any catch-all regex
+locations. The script tag on the static pages stays a plain relative `/gm.js`.
+
+**Deploying with `rsync --delete`?** Exclude the SQLite files (`analytics.db`,
+`-wal`, `-shm`) or every deploy silently wipes your history — and the
+registered passkeys with it.
 
 ## How it stays fast
 
