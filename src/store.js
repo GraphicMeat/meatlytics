@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS passkeys(
   name TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS invites(
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);
 `;
 
 // SQLite: convert stored ms epoch -> UTC 'YYYY-MM-DD'
@@ -246,6 +253,31 @@ class Store {
 
   passkeyUpdateCounter(credId, counter) {
     this.db.prepare('UPDATE passkeys SET counter=? WHERE cred_id=?').run(counter, credId);
+  }
+
+  inviteAdd({ code, name, expiresAt }) {
+    // ponytail: sweep unused invites 7 days past expiry here; used ones kept as a join record
+    this.db.prepare('DELETE FROM invites WHERE used_at IS NULL AND expires_at < ?').run(Date.now() - 7 * 86400000);
+    this.db
+      .prepare('INSERT INTO invites(code, name, created_at, expires_at) VALUES (?,?,?,?)')
+      .run(code, name || '', Date.now(), expiresAt);
+  }
+
+  inviteGet(code) {
+    const row = this.db.prepare('SELECT * FROM invites WHERE code=?').get(code);
+    if (!row) return null;
+    return { code: row.code, name: row.name, createdAt: row.created_at, expiresAt: row.expires_at, usedAt: row.used_at };
+  }
+
+  inviteMarkUsed(code) {
+    this.db.prepare('UPDATE invites SET used_at=? WHERE code=? AND used_at IS NULL').run(Date.now(), code);
+  }
+
+  inviteList() {
+    return this.db
+      .prepare('SELECT name, created_at, expires_at, used_at FROM invites ORDER BY created_at DESC')
+      .all()
+      .map((r) => ({ name: r.name, createdAt: r.created_at, expiresAt: r.expires_at, usedAt: r.used_at }));
   }
 
   close() {

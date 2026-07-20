@@ -182,28 +182,28 @@ function createAuth(store, opts) {
   }
 
   // --- invite codes: minted by a logged-in session so another admin/device
-  // can register a passkey via the same ?setup= link flow. 15-min TTL,
-  // deleted on successful registration (failed attempts hit the throttle).
+  // can register a passkey via the same ?setup= link flow. Named (who the link
+  // is for), 24h TTL, persisted in the DB so they survive restarts and the
+  // dashboard can show used/pending status. Marked used on successful
+  // registration (failed attempts hit the throttle).
 
-  const INVITE_TTL_MS = 15 * 60 * 1000;
-  const invites = new Map(); // code -> exp
-  function newInvite() {
-    for (const [c, e] of invites) if (e <= Date.now()) invites.delete(c);
+  const INVITE_TTL_MS = 24 * 3600 * 1000;
+  function newInvite(name) {
     const code = crypto.randomBytes(16).toString('hex');
-    invites.set(code, Date.now() + INVITE_TTL_MS);
+    store.inviteAdd({ code, name, expiresAt: Date.now() + INVITE_TTL_MS });
     return code;
   }
 
   function checkSetupCode(code) {
     if (typeof code !== 'string') return false;
-    const exp = invites.get(code);
-    if (exp && exp > Date.now()) return true;
+    const inv = store.inviteGet(code);
+    if (inv && !inv.usedAt && inv.expiresAt > Date.now()) return true;
     if (!setupCode || store.passkeyCount() !== 0) return false;
     return timingEq(code, setupCode);
   }
   function clearSetupCode(code) {
     setupCode = null;
-    if (typeof code === 'string') invites.delete(code);
+    if (typeof code === 'string') store.inviteMarkUsed(code);
   }
 
   const auth = {

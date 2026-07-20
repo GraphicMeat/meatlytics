@@ -147,9 +147,17 @@ test('invite: session mints code, second admin registers with it, single-use', a
     .post('/_analytics/api/passkeys/invite')
     .set('Host', HOST)
     .set('Cookie', cookie)
-    .send({});
+    .send({ name: 'Alice' });
   assert.strictEqual(inv.status, 200);
   assert.ok(inv.body.code, 'returns invite code');
+
+  // list shows the named invite as pending
+  let list = await request(server).get('/_analytics/api/passkeys/invites').set('Host', HOST).set('Cookie', cookie);
+  assert.strictEqual(list.status, 200);
+  assert.strictEqual(list.body.invites.length, 1);
+  assert.strictEqual(list.body.invites[0].name, 'Alice');
+  assert.strictEqual(list.body.invites[0].usedAt, null);
+  assert.ok(list.body.invites[0].expiresAt > Date.now() + 23 * 3600 * 1000, '24h TTL');
 
   // second admin registers with the invite code, no session, gets logged in
   const second = await doRegister(server, { setupCode: inv.body.code });
@@ -160,6 +168,30 @@ test('invite: session mints code, second admin registers with it, single-use', a
   // code is single-use
   const third = await doRegister(server, { setupCode: inv.body.code });
   assert.strictEqual(third.optsRes.status, 401);
+
+  // list now shows it as used
+  list = await request(server).get('/_analytics/api/passkeys/invites').set('Host', HOST).set('Cookie', cookie);
+  assert.ok(list.body.invites[0].usedAt, 'invite marked used');
+  mw.stop();
+});
+
+test('invite: expired code rejected, list unauthenticated -> 401', async () => {
+  const { mw, server, setupCode } = makeAppCapturingSetupCode();
+  const first = await doRegister(server, { setupCode });
+  const cookie = first.regRes.headers['set-cookie'][0].split(';')[0];
+
+  const inv = await request(server)
+    .post('/_analytics/api/passkeys/invite')
+    .set('Host', HOST)
+    .set('Cookie', cookie)
+    .send({ name: 'Bob' });
+  mw.store.db.prepare('UPDATE invites SET expires_at=? WHERE code=?').run(Date.now() - 1000, inv.body.code);
+
+  const denied = await doRegister(server, { setupCode: inv.body.code });
+  assert.strictEqual(denied.optsRes.status, 401);
+
+  const noAuth = await request(server).get('/_analytics/api/passkeys/invites').set('Host', HOST);
+  assert.strictEqual(noAuth.status, 401);
   mw.stop();
 });
 

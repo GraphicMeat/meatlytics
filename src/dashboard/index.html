@@ -90,11 +90,16 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <button type="button" id="addpk">Add passkey</button>
     <div id="invitebox" class="hidden">
       <div class="row" style="margin-top:8px">
+        <input id="invitename" placeholder="Who is this link for?" style="flex:1">
+        <button type="button" id="mkinvite">Create link</button>
+      </div>
+      <div class="row hidden" id="invitelinkrow" style="margin-top:8px">
         <input id="inviteurl" readonly style="flex:1" value="">
         <button type="button" id="copyinvite">Copy</button>
       </div>
-      <p class="mut">Open this link on any device to register a new passkey. Valid 15 minutes, single use.</p>
+      <p class="mut">Open this link on any device to register a new passkey. Valid 24 hours, single use.</p>
     </div>
+    <div id="invlist"></div>
     <h3 style="margin-top:16px">API key</h3>
     <div class="row">
       <input id="apikeyval" readonly style="flex:1" value="">
@@ -329,9 +334,21 @@ function deletePk(id,count){
     loadSettings();
   });
 }
+function renderInvites(list){
+  if(!list.length){ $('#invlist').innerHTML=''; return; }
+  $('#invlist').innerHTML='<h3 style="margin-top:16px">Invite links</h3><table><tr><th>For</th><th>Created</th><th>Status</th></tr>'+
+    list.map(function(v){
+      var st = v.usedAt ? 'Used' : (v.expiresAt < Date.now() ? 'Expired' : 'Pending');
+      return '<tr><td>'+esc(v.name||'(unnamed)')+'</td><td class="mut">'+esc(new Date(v.createdAt).toISOString().slice(0,10))+'</td><td class="mut">'+st+'</td></tr>';
+    }).join('')+'</table>';
+}
+function loadInvites(){
+  call('GET','/_analytics/api/passkeys/invites').then(function(r){ renderInvites((r.body&&r.body.invites)||[]); });
+}
 function loadSettings(){
   $('#serr').textContent='';
   call('GET','/_analytics/api/passkeys').then(function(r){ renderPkList((r.body&&r.body.passkeys)||[]); });
+  loadInvites();
   call('GET','/_analytics/api/key').then(function(r){
     if(!r.body) return;
     apiKeyFull=r.body.apiKey; apiKeyOverridden=!!r.body.overridden;
@@ -343,10 +360,18 @@ $('#gear').onclick=function(){ $('#settings').classList.remove('hidden'); loadSe
 $('#closeSettings').onclick=function(){ $('#settings').classList.add('hidden'); };
 $('#addpk').onclick=function(){
   $('#serr').textContent='';
-  call('POST','/_analytics/api/passkeys/invite',{}).then(function(r){
+  $('#invitebox').classList.toggle('hidden');
+  if(!$('#invitebox').classList.contains('hidden')) $('#invitename').focus();
+};
+$('#mkinvite').onclick=function(){
+  $('#serr').textContent='';
+  var name=$('#invitename').value.trim();
+  if(!name){ $('#invitename').focus(); return; }
+  call('POST','/_analytics/api/passkeys/invite',{name:name}).then(function(r){
     if(!r.body || !r.body.code){ $('#serr').textContent='Error'; return; }
     $('#inviteurl').value=location.origin+location.pathname+'?setup='+r.body.code;
-    $('#invitebox').classList.remove('hidden');
+    $('#invitelinkrow').classList.remove('hidden');
+    loadInvites();
   });
 };
 $('#copyinvite').onclick=function(){

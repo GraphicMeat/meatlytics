@@ -289,7 +289,15 @@ module.exports = function analytics(opts) {
 
     if (m === 'POST' && p === '/_analytics/api/passkeys/invite') {
       if (!auth.isSession(req)) return unauthorized(res);
-      return sendJson(res, { code: auth.newInvite() });
+      return readBody(req, (body) => {
+        const name = ((body && body.name) || '').toString().slice(0, 64);
+        sendJson(res, { code: auth.newInvite(name) });
+      });
+    }
+
+    if (m === 'GET' && p === '/_analytics/api/passkeys/invites') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return sendJson(res, { invites: store.inviteList() });
     }
 
     if (m === 'GET' && p === '/_analytics/api/passkeys') {
