@@ -178,6 +178,11 @@ Built to the Plausible/Fathom standard — stricter in places:
 
 - **No cookies, no localStorage, no fingerprinting** for visitors. The only
   cookie is the dashboard owner's own login session, scoped to `/_analytics`.
+  (One localStorage exception: the self-exclusion flag below — an opt-out,
+  never visitor data.)
+- **Self-exclusion:** visit any page with `?gm-ignore=1` to stop counting
+  that browser (yours), `?gm-ignore=0` to resume. Persisted in
+  `localStorage.gm_ignore`. Do it once per browser/device you use.
 - **Cookieless identity:** `visitor = SHA256(dailySalt + ip + userAgent + siteId)`,
   truncated to 16 bytes. The salt rotates at UTC midnight and the old salt is
   discarded — after 24 hours nobody, including you, can re-derive who was who.

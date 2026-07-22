@@ -76,6 +76,12 @@ function makeSandbox(opts = {}) {
     this._data = parts.join('');
   }
 
+  // Minimal localStorage: property access + removeItem is all the tracker uses.
+  win.localStorage = Object.assign(
+    { removeItem(k) { delete this[k]; } },
+    opts.localStorage,
+  );
+
   const sandbox = {
     document: doc,
     window: win,
@@ -325,4 +331,50 @@ test('tracker: data-respect-dnt + DNT=1 -> no listeners, window.gm is a no-op', 
   s.doc.hidden = true;
   s.fire('document', 'visibilitychange');
   assert.equal(s.beacons.length, 0, 'nothing ever sent');
+});
+
+// 11. ?gm-ignore self-exclusion ---------------------------------------------
+test('tracker: ?gm-ignore=1 sets flag, no listeners, nothing sent', () => {
+  const s = makeSandbox({ search: '?gm-ignore=1' });
+  s.load();
+
+  assert.equal(s.win.localStorage.gm_ignore, 'true');
+  assert.equal(typeof s.sandbox.window.gm, 'function');
+  assert.doesNotThrow(() => s.sandbox.window.gm('x', { y: 1 }));
+  assert.equal(Object.keys(s.doc._listeners).length, 0, 'no document listeners');
+  assert.equal(Object.keys(s.win._listeners).length, 0, 'no window listeners');
+
+  s.doc.hidden = true;
+  s.fire('document', 'visibilitychange');
+  assert.equal(s.beacons.length, 0, 'nothing ever sent');
+});
+
+test('tracker: pre-existing gm_ignore flag -> tracker is a no-op', () => {
+  const s = makeSandbox({ localStorage: { gm_ignore: 'true' } });
+  s.load();
+
+  assert.equal(Object.keys(s.doc._listeners).length, 0, 'no document listeners');
+  s.doc.hidden = true;
+  s.fire('document', 'visibilitychange');
+  assert.equal(s.beacons.length, 0, 'nothing ever sent');
+});
+
+test('tracker: ?gm-ignore=0 clears flag and tracking resumes', () => {
+  const s = makeSandbox({ search: '?gm-ignore=0', localStorage: { gm_ignore: 'true' } });
+  s.load();
+
+  assert.equal(s.win.localStorage.gm_ignore, undefined, 'flag cleared');
+  const e = s.flush();
+  assert.ok(e.some((ev) => ev.t === 'pageview'), 'pageview tracked again');
+});
+
+test('tracker: broken localStorage -> tracking still works', () => {
+  const s = makeSandbox();
+  Object.defineProperty(s.win, 'localStorage', {
+    get() { throw new Error('denied'); },
+  });
+  s.load();
+
+  const e = s.flush();
+  assert.ok(e.some((ev) => ev.t === 'pageview'), 'pageview tracked');
 });

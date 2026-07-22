@@ -2,8 +2,9 @@
  * gm.js -- meatlytics tracker.
  * Zero dependencies. Hard budget: <=3072 bytes gzipped (see scripts/build.js).
  * Every handler is try/catch wrapped: a tracker bug must never break the host page.
- * No cookies, no localStorage, no third-party requests -- everything posts to
- * same-origin POST /gm/e as one batched JSON payload per flush.
+ * No cookies, no third-party requests -- everything posts to same-origin
+ * POST /gm/e as one batched JSON payload per flush. localStorage is touched
+ * only for the ?gm-ignore self-exclusion flag, never for visitor data.
  */
 (function(){
 "use strict";
@@ -17,6 +18,20 @@ if(RD&&RD!=="false"&&(N.doNotTrack==="1"||W.doNotTrack==="1"||N.msDoNotTrack==="
   W.gm=function(){};
   return;
 }
+
+/* Self-exclusion: visit any page with ?gm-ignore=1 to stop tracking this
+   browser (persisted in localStorage -- the one deliberate exception to the
+   no-localStorage rule; it stores an opt-OUT, never visitor data).
+   ?gm-ignore=0 re-enables. */
+try{
+  var IG=new URLSearchParams(L.search).get("gm-ignore");
+  if(IG==="1")W.localStorage.gm_ignore="true";
+  else if(IG==="0")W.localStorage.removeItem("gm_ignore");
+  if(W.localStorage.gm_ignore==="true"){
+    W.gm=function(){};
+    return;
+  }
+}catch(e){}
 
 var EP="/gm/e";
 var CAP=50;
