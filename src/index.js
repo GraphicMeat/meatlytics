@@ -95,6 +95,9 @@ module.exports = function analytics(opts) {
   if (!opts || !opts.siteId || !opts.dbPath) {
     throw new Error('meatlytics: opts.siteId and opts.dbPath are required');
   }
+  if (opts.basePath && !/^\/[A-Za-z0-9/._~-]*$/.test(opts.basePath)) {
+    throw new Error('meatlytics: opts.basePath must start with "/" and contain only URL path characters');
+  }
   const store = openStore(opts.dbPath);
   const collector = createCollector(store, opts);
   const auth = createAuth(store, opts);
@@ -348,7 +351,7 @@ module.exports = function analytics(opts) {
       const tok = auth.isSession(req) ? JSON.stringify(auth.makeSession()) : 'null';
       html = html.replace('%TOKEN%', tok);
       html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
-      html = html.replace('%BASE%', opts.basePath || '');
+      html = html.replace('%BASE%', () => opts.basePath || '');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.statusCode = 200;

@@ -39,3 +39,25 @@ test('dashboard without basePath keeps default unprefixed paths', async () => {
   assert.match(res.text, /fetch\(BASE\+'\/gm\/world\.svg'/);
   mw.stop();
 });
+
+test('basePath with a single quote is rejected at construction', () => {
+  assert.throws(
+    () => analytics({ siteId: 'test', dbPath: tmpDbPath(), basePath: "/s/it's" }),
+    /basePath must start with/
+  );
+});
+
+test('basePath with a $ is rejected at construction', () => {
+  assert.throws(
+    () => analytics({ siteId: 'test', dbPath: tmpDbPath(), basePath: '/s/$&' }),
+    /basePath must start with/
+  );
+});
+
+test('basePath with dots, underscores, tildes and dashes is served verbatim', async () => {
+  buildDashboard();
+  const { mw, server } = makeApp({ basePath: '/s/my-shop.myshopify.com' });
+  const res = await request(server).get('/_analytics').expect(200);
+  assert.match(res.text, /var BASE = '\/s\/my-shop\.myshopify\.com'/);
+  mw.stop();
+});
