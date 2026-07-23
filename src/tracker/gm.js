@@ -33,7 +33,9 @@ try{
   }
 }catch(e){}
 
-var EP="/gm/e";
+var BASE="";
+try{if(SC&&SC.src)BASE=new URL(SC.src,L.href).pathname.replace(/\/gm\.js$/,"")}catch(e){}
+var EP=BASE+"/gm/e";
 var CAP=50;
 var q=[];
 
@@ -210,7 +212,7 @@ try{
    costs real visitors a byte; full overlay UX lives in the dashboard bundle. */
 try{
   var ov=new URLSearchParams(L.search).get("gm-overlay");
-  if(ov) import("/gm-overlay.js").then(function(m){m.init(ov)})["catch"](function(){});
+  if(ov) import(BASE+"/gm-overlay.js").then(function(m){m.init(ov)})["catch"](function(){});
 }catch(e){}
 
 pageview();

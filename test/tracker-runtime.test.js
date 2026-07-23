@@ -33,6 +33,7 @@ function makeSandbox(opts = {}) {
 
   const doc = Object.assign(eventTarget(), {
     currentScript: {
+      src: opts.scriptSrc,
       dataset: { site: opts.site || 'site.test', respectDnt: opts.respectDnt },
     },
     documentElement: { scrollHeight: opts.scrollHeight || 1000 },
@@ -294,6 +295,21 @@ test('tracker: visibilitychange hidden sends batched {s,v,e} with a duration eve
   assert.ok(dur, 'duration event present');
   assert.ok(dur.ms > 0, 'duration ms > 0');
   assert.equal(dur.ms, 4000);
+});
+
+// 8b. base path derived from the tracker's own script src -------------------
+test('tracker: posts to base derived from script src', () => {
+  const s = makeSandbox({ site: 'shop.example', scriptSrc: 'https://shop.example/apps/meatlytics/gm.js' });
+  s.load();
+  s.flush();
+  assert.equal(s.beacons[0].url, '/apps/meatlytics/gm/e');
+});
+
+test('tracker: posts to /gm/e when served from root', () => {
+  const s = makeSandbox({ site: 'shop.example', scriptSrc: 'https://shop.example/gm.js' });
+  s.load();
+  s.flush();
+  assert.equal(s.beacons[0].url, '/gm/e');
 });
 
 // 9. custom events: pre-load queue drained + post-load gm() -----------------
