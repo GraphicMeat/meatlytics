@@ -348,6 +348,7 @@ module.exports = function analytics(opts) {
       const tok = auth.isSession(req) ? JSON.stringify(auth.makeSession()) : 'null';
       html = html.replace('%TOKEN%', tok);
       html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
+      html = html.replace('%BASE%', opts.basePath || '');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.statusCode = 200;

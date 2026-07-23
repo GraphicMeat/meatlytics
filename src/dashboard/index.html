@@ -144,6 +144,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
 <script>
 var TOKEN = %TOKEN%;
 var PEERS = %PEERS%;
+var BASE = '%BASE%';
 var $ = function(s,r){return (r||document).querySelector(s)};
 var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
 var state = {view:'overview', site:'local', from:'', to:'', rtTimer:0};
@@ -153,7 +154,7 @@ function pct(x){ return (x*100).toFixed(1)+'%'; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
 
 function api(path){
-  return fetch('/gm/api/'+path, {headers: TOKEN?{Authorization:'Bearer '+TOKEN}:{}}).then(function(r){
+  return fetch(BASE+'/gm/api/'+path, {headers: TOKEN?{Authorization:'Bearer '+TOKEN}:{}}).then(function(r){
     if(r.status===401){ showLogin(); throw new Error('unauth'); }
     return r.json();
   });
@@ -162,7 +163,7 @@ function qs(){ return 'from='+state.from+'&to='+state.to; }
 
 // ---------- World map ----------
 var MAP=null; // cached fetch promise -> svg text or null
-function loadMap(){ if(!MAP) MAP=fetch('/gm/world.svg').then(function(r){return r.ok?r.text():null}).catch(function(){return null}); return MAP; }
+function loadMap(){ if(!MAP) MAP=fetch(BASE+'/gm/world.svg').then(function(r){return r.ok?r.text():null}).catch(function(){return null}); return MAP; }
 var RN; try{ RN=new Intl.DisplayNames(['en'],{type:'region'}); }catch(e){}
 function cname(cc){ if(!cc) return 'Unknown'; try{ return (RN&&RN.of(cc))||cc; }catch(e){ return cc; } }
 var SVGNS='http:'+'//www.w3.org/2000/svg'; // split apart so no scannable external-host string appears literally
