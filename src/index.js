@@ -352,6 +352,10 @@ module.exports = function analytics(opts) {
       html = html.replace('%TOKEN%', tok);
       html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
       html = html.replace('%BASE%', () => opts.basePath || '');
+      // Settings (passkeys/invites/API key) hits absolute /_analytics/webauthn|api
+      // paths with cookie-auth that don't exist under a sub-path mount — mounted
+      // deployments authenticate externally via the ticket, so hide the entry point.
+      html = html.replace('%GEARCLASS%', () => (opts.basePath ? 'hidden' : ''));
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.statusCode = 200;

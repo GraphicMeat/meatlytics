@@ -61,3 +61,20 @@ test('basePath with dots, underscores, tildes and dashes is served verbatim', as
   assert.match(res.text, /var BASE = '\/s\/my-shop\.myshopify\.com'/);
   mw.stop();
 });
+
+test('dashboard with basePath hides the Settings entry point (gear button)', async () => {
+  buildDashboard();
+  const { mw, server } = makeApp({ basePath: '/s/x' });
+  const res = await request(server).get('/_analytics').expect(200);
+  assert.match(res.text, /id="gear"[^>]*class="hidden"/, 'gear button should carry the hidden class under a basePath mount');
+  assert.ok(!/%GEARCLASS%/.test(res.text), 'gear class placeholder was substituted');
+  mw.stop();
+});
+
+test('dashboard without basePath keeps the Settings entry point visible', async () => {
+  buildDashboard();
+  const { mw, server } = makeApp();
+  const res = await request(server).get('/_analytics').expect(200);
+  assert.match(res.text, /id="gear"[^>]*class=""/, 'gear button should not be hidden on root mount');
+  mw.stop();
+});
