@@ -662,6 +662,14 @@ function renderRealtime(){
 
 // ---------- boot ----------
 setRange(7);
+// deep link: #flows / #funnels / #heatmaps / #realtime selects that view on load
+var dl=location.hash.slice(1);
+if(['flows','funnels','heatmaps','realtime'].indexOf(dl)>=0){
+  state.view=dl;
+  $$('#nav button').forEach(function(x){x.classList.toggle('on', x.dataset.v===dl)});
+  $$('main > section').forEach(function(s){s.classList.add('hidden')});
+  $('#v-'+dl).classList.remove('hidden');
+}
 // ?setup= link wins over an existing session so a logged-in device can still
 // register an additional passkey via an invite link.
 if(TOKEN && !new URL(location.href).searchParams.get('setup')){ showApp(); } else { showLogin(); }
