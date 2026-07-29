@@ -98,6 +98,9 @@ module.exports = function analytics(opts) {
   if (opts.basePath && !/^\/[A-Za-z0-9/._~-]*$/.test(opts.basePath)) {
     throw new Error('meatlytics: opts.basePath must start with "/" and contain only URL path characters');
   }
+  if (opts.siteOrigin && !/^https?:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(opts.siteOrigin)) {
+    throw new Error('meatlytics: opts.siteOrigin must be an origin like https://example.com');
+  }
   const store = openStore(opts.dbPath);
   const collector = createCollector(store, opts);
   const auth = createAuth(store, opts);
@@ -352,6 +355,7 @@ module.exports = function analytics(opts) {
       html = html.replace('%TOKEN%', tok);
       html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
       html = html.replace('%BASE%', () => opts.basePath || '');
+      html = html.replace('%SITE%', () => opts.siteOrigin || '');
       // Settings (passkeys/invites/API key) hits absolute /_analytics/webauthn|api
       // paths with cookie-auth that don't exist under a sub-path mount — mounted
       // deployments authenticate externally via the ticket, so hide the entry point.

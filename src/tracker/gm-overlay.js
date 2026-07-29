@@ -7,6 +7,8 @@
 
 export function init(token) {
   var W = window, D = document, L = location;
+  // API base = where this module was served from (root, or a proxy prefix like /apps/meatlytics)
+  var BASE = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
   function bucket() {
     var w = W.innerWidth;
@@ -59,7 +61,7 @@ export function init(token) {
   function render(kind) {
     size();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    var url = '/gm/api/heatmap?path=' + encodeURIComponent(L.pathname) +
+    var url = BASE + '/gm/api/heatmap?path=' + encodeURIComponent(L.pathname) +
       '&vw=' + bucket() + '&type=' + kind + '&t=' + encodeURIComponent(token);
     fetch(url, { headers: {} })
       .then(function (r) { return r.ok ? r.json() : []; })

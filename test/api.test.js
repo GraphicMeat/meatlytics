@@ -66,7 +66,17 @@ test('dashboard HTML served, self-contained, <= 60KB', async () => {
   const bytes = Buffer.byteLength(res.text, 'utf8');
   assert.ok(bytes <= 60 * 1024, 'dashboard ' + bytes + ' bytes <= 60KB');
   assert.ok(!/%TOKEN%/.test(res.text), 'token placeholder was substituted');
+  assert.ok(!/%SITE%/.test(res.text), 'site placeholder was substituted');
   assert.ok(!/https?:\/\//.test(res.text), 'no external hosts');
+  mw.stop();
+});
+
+test('siteOrigin lands in dashboard HTML for the heatmap iframe', async () => {
+  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), siteOrigin: 'https://shop.example.com' });
+  const server = http.createServer((req, res) => mw(req, res, () => res.end()));
+  const res = await request(server).get('/_analytics').expect(200);
+  assert.ok(res.text.includes("var SITE = 'https://shop.example.com'"), 'SITE substituted');
+  assert.throws(() => analytics({ siteId: 'x', dbPath: tmpDbPath(), siteOrigin: 'javascript:alert(1)' }));
   mw.stop();
 });
 
