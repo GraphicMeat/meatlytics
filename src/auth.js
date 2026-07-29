@@ -212,6 +212,7 @@ function createAuth(store, opts) {
     apiAllowed,
     makeSession,
     makeHeatToken,
+    checkHeat: (t) => valid(t, 'h'),
     setSessionCookie,
     ipOf,
     throttled,

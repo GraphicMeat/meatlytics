@@ -145,7 +145,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
 var TOKEN = %TOKEN%;
 var PEERS = %PEERS%;
 var BASE = '%BASE%';
-var SITE = '%SITE%'; // tracked site's origin for the heatmap preview iframe ('' = same origin)
+var PREVIEW = '%PREVIEW%'; // same-origin proxy route for the heatmap iframe ('' = frame the path directly)
 var $ = function(s,r){return (r||document).querySelector(s)};
 var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
 var state = {view:'overview', site:'local', from:'', to:'', rtTimer:0};
@@ -639,7 +639,8 @@ function openHeat(){
   var path=$('#hpath').value||'/', vw=$('#hvw').value;
   var width=vw==='mobile'?375:vw==='tablet'?800:1200;
   api('token').then(function(d){
-    var src=SITE+path+(path.indexOf('?')<0?'?':'&')+'gm-overlay='+encodeURIComponent(d.token);
+    var src=PREVIEW?PREVIEW+'?path='+encodeURIComponent(path)+'&t='+encodeURIComponent(d.token)
+      :path+(path.indexOf('?')<0?'?':'&')+'gm-overlay='+encodeURIComponent(d.token);
     $('#hframe').innerHTML='<iframe src="'+esc(src)+'" style="width:'+width+'px;max-width:100%"></iframe>';
   });
 }

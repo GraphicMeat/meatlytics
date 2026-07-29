@@ -66,17 +66,19 @@ test('dashboard HTML served, self-contained, <= 60KB', async () => {
   const bytes = Buffer.byteLength(res.text, 'utf8');
   assert.ok(bytes <= 60 * 1024, 'dashboard ' + bytes + ' bytes <= 60KB');
   assert.ok(!/%TOKEN%/.test(res.text), 'token placeholder was substituted');
-  assert.ok(!/%SITE%/.test(res.text), 'site placeholder was substituted');
+  assert.ok(!/%PREVIEW%/.test(res.text), 'preview placeholder was substituted');
   assert.ok(!/https?:\/\//.test(res.text), 'no external hosts');
   mw.stop();
 });
 
-test('siteOrigin lands in dashboard HTML for the heatmap iframe', async () => {
-  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), siteOrigin: 'https://shop.example.com' });
+test('previewPath lands in dashboard HTML for the heatmap iframe', async () => {
+  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), previewPath: '/s/x/preview' });
   const server = http.createServer((req, res) => mw(req, res, () => res.end()));
   const res = await request(server).get('/_analytics').expect(200);
-  assert.ok(res.text.includes("var SITE = 'https://shop.example.com'"), 'SITE substituted');
-  assert.throws(() => analytics({ siteId: 'x', dbPath: tmpDbPath(), siteOrigin: 'javascript:alert(1)' }));
+  assert.ok(res.text.includes("var PREVIEW = '/s/x/preview'"), 'PREVIEW substituted');
+  assert.ok(mw.auth.checkHeat(mw.auth.makeHeatToken()), 'checkHeat accepts fresh heat token');
+  assert.ok(!mw.auth.checkHeat('h123.bogus'), 'checkHeat rejects bad token');
+  assert.throws(() => analytics({ siteId: 'x', dbPath: tmpDbPath(), previewPath: 'https://evil.example' }));
   mw.stop();
 });
 

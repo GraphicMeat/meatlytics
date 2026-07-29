@@ -7,8 +7,10 @@
 
 export function init(token) {
   var W = window, D = document, L = location;
-  // API base = where this module was served from (root, or a proxy prefix like /apps/meatlytics)
-  var BASE = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+  // API base = where this module was served from (root, or a proxy prefix like
+  // /apps/meatlytics). Absolute URL so a <base> tag in a proxied preview page
+  // can't redirect the fetch to the wrong origin.
+  var BASE = new URL('.', import.meta.url).href.replace(/\/$/, '');
 
   function bucket() {
     var w = W.innerWidth;
