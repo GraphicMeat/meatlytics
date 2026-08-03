@@ -167,3 +167,26 @@ test('meta get/set round-trips', () => {
   assert.strictEqual(store.metaGet('k'), 'v');
   store.close();
 });
+
+test('db file, WAL sidecars and a freshly created dir are not world-readable', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dbPath = path.join(tmpDbPath() + '.d', 'a.db');
+  const store = openStore(dbPath);
+  store.insertEvents([{ ts: Date.now(), site_id: SITE, visitor: 'A', session_id: 's', type: 'pageview', path: '/' }]);
+  const mode = (f) => fs.statSync(f).mode & 0o777;
+  assert.strictEqual(mode(dbPath), 0o600);
+  assert.strictEqual(mode(dbPath + '-wal'), 0o600);
+  assert.strictEqual(mode(dbPath + '-shm'), 0o600);
+  assert.strictEqual(mode(path.dirname(dbPath)), 0o700);
+  store.close();
+});
+
+test('an existing world-readable db is tightened on open', () => {
+  const fs = require('node:fs');
+  const dbPath = tmpDbPath();
+  openStore(dbPath).close();
+  fs.chmodSync(dbPath, 0o644);
+  openStore(dbPath).close();
+  assert.strictEqual(fs.statSync(dbPath).mode & 0o777, 0o600);
+});

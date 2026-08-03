@@ -91,10 +91,24 @@ const DATE_EXPR = "date(ts/1000,'unixepoch')";
 
 class Store {
   constructor(dbPath) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    // The DB holds visitor data, the api key and the dashboard HMAC secret
+    // (anyone who reads it can mint session tokens), so it must be owner-only.
+    // Default 0644 leaks it to every other local account on a shared box.
+    // Touch + chmod BEFORE opening: SQLite copies the main file's mode onto
+    // the -wal/-shm sidecars it creates. Existing files get fixed on next boot.
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });
+    fs.closeSync(fs.openSync(dbPath, 'a', 0o600));
+    fs.chmodSync(dbPath, 0o600);
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    for (const sfx of ['-wal', '-shm']) {
+      try {
+        fs.chmodSync(dbPath + sfx, 0o600);
+      } catch {
+        /* not created yet — inherits 0600 from the main file */
+      }
+    }
     this.db.exec(SCHEMA);
 
     // migration: pre-existing DBs created before these columns existed need them added

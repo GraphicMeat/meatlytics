@@ -130,7 +130,9 @@ same middleware shape, or a bare `http.createServer`.
 ```js
 analytics({
   siteId,             // required. identifies this site's rows in the DB
-  dbPath,             // required. SQLite file path (directory created if missing)
+  dbPath,             // required. SQLite file path (directory created if missing, 0700;
+                      //   the db + its -wal/-shm are forced to 0600 on every open — they
+                      //   hold visitor data, the api key and the dashboard HMAC secret)
   apiKey,             // optional override. otherwise minted once and persisted in the DB
   peers,              // optional. [{ name, url, apiKey }] — see Hub mode
   respectDNT,         // optional, default false. if true, tracker no-ops when the browser signals Do Not Track
