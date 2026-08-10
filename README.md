@@ -10,7 +10,7 @@ client or the backend. That's a build gate, not a promise.
 ```
 tracker         1.6 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
 dashboard       6.3 KB gzipped   single self-contained HTML file, no framework
-dependencies    2                (better-sqlite3, geoip-country)
+dependencies    1                (better-sqlite3)
 collect
 throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
 ```
@@ -26,7 +26,7 @@ Add one script tag. No configuration, no event wiring:
 - **Outbound links, file downloads, form submits** (form id only — never field values)
 - **Scroll depth, time on page** (visible time, not wall-clock)
 - **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
-- **Countries** — visitor country per date range + live world map, resolved offline at ingest from a bundled IP database (no external geo API, IP still never stored)
+- **Countries** — visitor country per date range + live world map, read at ingest from Cloudflare's `CF-IPCountry` edge header (no geo database, no external API, IP still never stored; deployments not behind Cloudflare record no country)
 - **Realtime** — who's on the site right now, with a pulsing world map
 
 Custom events when you need precision:

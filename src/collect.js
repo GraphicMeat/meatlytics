@@ -1,5 +1,4 @@
 'use strict';
-const geoip = require('geoip-country');
 const { getSalt, visitorHash, resolveSession } = require('./identity');
 
 const MAX_EVENTS = 50;
@@ -63,15 +62,12 @@ function parseLang(header) {
   return /^[a-z]+$/.test(primary) ? primary.slice(0, 8) : null;
 }
 
-// IP -> ISO-2 country, uppercase; null on failure or private/unresolvable IP.
-// Never stores the IP itself (see identity.js) — resolved once at ingest time.
-function resolveCountry(ip) {
-  try {
-    const g = ip && geoip.lookup(ip);
-    return (g && g.country) || null;
-  } catch {
-    return null;
-  }
+// ISO-2 country from Cloudflare's CF-IPCountry edge header; every deployment
+// sits behind Cloudflare, so no local IP database is needed. XX (unknown) and
+// T1 (Tor) count as no country. Header absent (non-CF deploy) -> null.
+function resolveCountry(header) {
+  const c = typeof header === 'string' ? header.trim().toUpperCase() : '';
+  return /^[A-Z]{2}$/.test(c) && c !== 'XX' && c !== 'T1' ? c : null;
 }
 
 function num(v) {
@@ -155,14 +151,14 @@ function createCollector(store, opts) {
     return true;
   }
 
-  function ingest(body, ip, ua, lang) {
+  function ingest(body, ip, ua, lang, countryHeader) {
     if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
     const ts = Date.now();
     const dateStr = new Date(ts).toISOString().slice(0, 10);
     const salt = getSalt(store.db, dateStr);
     const visitor = visitorHash({ salt, ip, ua, siteId });
     const session = resolveSession(store.db, visitor, ts);
-    const country = resolveCountry(ip);
+    const country = resolveCountry(countryHeader);
     const plat = parseUA(ua);
     const stamp = { ts, siteId, visitor, session, country, browser: plat.browser, os: plat.os, device: plat.device, lang: parseLang(lang) };
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
@@ -208,7 +204,7 @@ function createCollector(store, opts) {
         return done();
       }
       try {
-        ingest(body, ip, ua, lang);
+        ingest(body, ip, ua, lang, req.headers['cf-ipcountry']);
       } catch {
         /* drop */
       }

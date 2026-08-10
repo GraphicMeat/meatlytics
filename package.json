@@ -30,8 +30,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
-    "geoip-country": "^5.0.202607150057"
+    "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
     "supertest": "^7.0.0"
