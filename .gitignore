@@ -9,3 +9,6 @@ docs/superpowers/
 docs/plans/
 docs/specs/
 .claude/
+
+# Serena MCP workspace — local only
+.serena/
