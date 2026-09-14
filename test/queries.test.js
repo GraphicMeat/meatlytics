@@ -168,7 +168,7 @@ test('countries: pageview visitors grouped by country DESC, unknown as empty str
     { ts: at(D2, '10:03'), site_id: SITE, visitor: 'D', session_id: 'sD', type: 'pageview', path: '/home', country: null },
   ]);
   const rows = Q.countries(store.db, RANGE);
-  assert.deepStrictEqual(rows[0], { country: 'US', visitors: 2 });
+  assert.deepStrictEqual(rows[0], { country: 'US', visitors: 2, visitorsFiltered: 2 });
   assert.ok(rows.some((r) => r.country === 'DE' && r.visitors === 1));
   assert.ok(rows.some((r) => r.country === '' && r.visitors === 1), 'unknown country grouped as empty string');
   store.close();
@@ -218,5 +218,63 @@ test('eventsList: custom event counts + uniques', () => {
   const signup = ev.find((e) => e.name === 'signup');
   assert.strictEqual(signup.count, 2); // A and D
   assert.strictEqual(signup.uniques, 2);
+  store.close();
+});
+
+// --- excluded paths ----------------------------------------------------------
+
+test('normalizeExcludes: full URLs -> paths, trailing slash stripped, deduped, blanks dropped', () => {
+  assert.deepStrictEqual(
+    Q.normalizeExcludes(['https://graphicmeat.com/downloads', '/downloads/', '  ', '/download-stats.html?x=1', 42]),
+    ['/downloads', '/download-stats.html']
+  );
+  assert.deepStrictEqual(Q.normalizeExcludes('nope'), []);
+});
+
+test('overview: no excludes -> no filtered block', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  assert.strictEqual(Q.overview(store.db, RANGE).filtered, undefined);
+  assert.strictEqual(Q.overview(store.db, { ...RANGE, exclude: [] }).filtered, undefined);
+  store.close();
+});
+
+test('overview: filtered block drops excluded-path pageviews, recomputes bounce + duration', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  // E only ever visits the internal stats page (with a trailing slash) -> gone from filtered.
+  store.insertEvents([
+    { ts: at(D2, '13:00'), site_id: SITE, visitor: 'E', session_id: 'sE', type: 'pageview', path: '/stats/' },
+    { ts: at(D2, '13:01'), site_id: SITE, visitor: 'E', session_id: 'sE', type: 'pageview', path: '/stats' },
+    { ts: at(D2, '13:02'), site_id: SITE, visitor: 'E', session_id: 'sE', type: 'duration', path: '/stats', value_int: 9000 },
+  ]);
+  const o = Q.overview(store.db, { ...RANGE, exclude: ['/stats', '/checkout'] });
+  // unfiltered row still counts everything
+  assert.strictEqual(o.visitors, 5);
+  assert.strictEqual(o.pageviews, 10);
+  // filtered: E gone; A loses /checkout -> 7 pageviews (A2 B2 C1 D2)
+  assert.strictEqual(o.filtered.visitors, 4);
+  assert.strictEqual(o.filtered.pageviews, 7);
+  assert.strictEqual(o.filtered.bounceRate, 1 / 4); // sE no longer a session at all
+  assert.strictEqual(o.filtered.avgDuration, Math.round(4000 / 7)); // E's 9000ms excluded
+  assert.deepStrictEqual(o.excluded, ['/stats', '/checkout']);
+  store.close();
+});
+
+test('countries: visitorsFiltered alongside visitors, not subtractive', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(D2, '10:00'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'pageview', path: '/home', country: 'LT' },
+    { ts: at(D2, '10:01'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'pageview', path: '/downloads', country: 'LT' },
+    { ts: at(D2, '10:00'), site_id: SITE, visitor: 'B', session_id: 'sB', type: 'pageview', path: '/downloads', country: 'LT' },
+    { ts: at(D2, '10:00'), site_id: SITE, visitor: 'C', session_id: 'sC', type: 'pageview', path: '/home', country: 'DE' },
+  ]);
+  const rows = Q.countries(store.db, { ...RANGE, exclude: ['/downloads'] });
+  assert.deepStrictEqual(rows, [
+    { country: 'LT', visitors: 2, visitorsFiltered: 1 },
+    { country: 'DE', visitors: 1, visitorsFiltered: 1 },
+  ]);
+  // no list -> both numbers equal
+  for (const r of Q.countries(store.db, RANGE)) assert.strictEqual(r.visitorsFiltered, r.visitors);
   store.close();
 });

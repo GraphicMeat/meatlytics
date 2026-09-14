@@ -7,6 +7,7 @@ const { createCollector } = require('./collect');
 const { createAuth } = require('./auth');
 const webauthn = require('./webauthn');
 const api = require('./api');
+const { normalizeExcludes } = require('./queries');
 
 const PLACEHOLDER_JS = '/* meatlytics: tracker not built yet (run `npm run build`) */\n';
 const DASH_MISSING = '<!doctype html><p>meatlytics: dashboard not built yet (run <code>npm run build</code>)</p>';
@@ -340,6 +341,21 @@ module.exports = function analytics(opts) {
       const newKey = auth.rotateApiKey();
       if (newKey === null) return sendJson(res, { error: 'overridden' }, 400);
       return sendJson(res, { apiKey: newKey });
+    }
+
+    if (m === 'GET' && p === '/_analytics/api/excludes') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return sendJson(res, { paths: api.excludePaths(store) });
+    }
+
+    if (m === 'POST' && p === '/_analytics/api/excludes') {
+      if (!auth.isSession(req)) return unauthorized(res);
+      return readBody(req, (body) => {
+        if (!body || !Array.isArray(body.paths)) return sendJson(res, { error: 'bad-request' }, 400);
+        const paths = normalizeExcludes(body.paths);
+        store.metaSet('excludePaths', JSON.stringify(paths));
+        sendJson(res, { paths });
+      });
     }
 
     // Dashboard shell (public). If the owner already has a valid session cookie,

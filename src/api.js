@@ -18,6 +18,15 @@ function parseSteps(raw) {
     });
 }
 
+// Owner-managed list in meta (Settings > Excluded paths); already normalized on save.
+function excludePaths(store) {
+  try {
+    return JSON.parse(store.metaGet('excludePaths') || '[]');
+  } catch {
+    return [];
+  }
+}
+
 function json(res, obj, code = 200) {
   res.statusCode = code;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -32,12 +41,13 @@ function handle(req, res, url, ctx) {
   const sp = url.searchParams;
   const db = ctx.store.db;
   const base = { siteId: ctx.siteId, from: sp.get('from') || undefined, to: sp.get('to') || undefined };
+  const exclude = excludePaths(ctx.store);
 
   switch (p) {
     case '/gm/api/token':
       return json(res, { token: ctx.auth.makeHeatToken() }), true;
     case '/gm/api/overview':
-      return json(res, Q.overview(db, base)), true;
+      return json(res, Q.overview(db, { ...base, exclude })), true;
     case '/gm/api/pages':
       return json(res, Q.pages(db, base)), true;
     case '/gm/api/sources':
@@ -58,7 +68,7 @@ function handle(req, res, url, ctx) {
     case '/gm/api/events':
       return json(res, Q.eventsList(db, base)), true;
     case '/gm/api/countries':
-      return json(res, Q.countries(db, base)), true;
+      return json(res, Q.countries(db, { ...base, exclude })), true;
     case '/gm/api/platforms':
       return json(res, Q.platforms(db, base)), true;
     case '/gm/api/hub/overview':
@@ -69,4 +79,4 @@ function handle(req, res, url, ctx) {
   }
 }
 
-module.exports = { handle, parseSteps };
+module.exports = { handle, parseSteps, excludePaths };

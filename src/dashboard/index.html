@@ -100,6 +100,10 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
       <p class="mut">Open this link on any device to register a new passkey. Valid 24 hours, single use.</p>
     </div>
     <div id="invlist"></div>
+    <h3 style="margin-top:16px">Excluded paths</h3>
+    <p class="mut">Still recorded. Overview shows a second row and Countries a second column without them. One path or URL per line.</p>
+    <textarea id="exval" rows="3" style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace" placeholder="/downloads"></textarea>
+    <div class="row" style="margin-top:6px"><button type="button" id="saveex">Save</button><span class="mut" id="exmsg"></span></div>
     <h3 style="margin-top:16px">API key</h3>
     <div class="row">
       <input id="apikeyval" readonly style="flex:1" value="">
@@ -192,12 +196,14 @@ function renderMap(el, data, mode){
     });
   });
 }
-function countriesTable(rows){
+// ex: exclusions configured -> second column with visitors outside excluded paths.
+function countriesTable(rows,ex){
   if(!rows.length) return '<p class="mut">No data</p>';
   var max=rows[0].visitors||1;
-  return '<table><tr><th>Country</th><th class="n">Visitors</th></tr>'+
+  return '<table><tr><th>Country</th><th class="n">'+(ex?'All':'Visitors')+'</th>'+(ex?'<th class="n">Excl.</th>':'')+'</tr>'+
     rows.slice(0,10).map(function(r){
-      return '<tr><td class="bar"><span class="fill" style="width:'+(r.visitors/max*100)+'%"></span><span>'+esc(cname(r.country))+'</span></td><td class="n">'+r.visitors+'</td></tr>';
+      return '<tr><td class="bar"><span class="fill" style="width:'+(r.visitors/max*100)+'%"></span><span>'+esc(cname(r.country))+'</span></td><td class="n">'+r.visitors+'</td>'+
+        (ex?'<td class="n">'+(r.visitorsFiltered==null?'–':r.visitorsFiltered)+'</td>':'')+'</tr>';
     }).join('')+'</table>';
 }
 
@@ -351,6 +357,8 @@ function loadSettings(){
   $('#serr').textContent='';
   call('GET','/_analytics/api/passkeys').then(function(r){ renderPkList((r.body&&r.body.passkeys)||[]); });
   loadInvites();
+  $('#exmsg').textContent='';
+  call('GET','/_analytics/api/excludes').then(function(r){ $('#exval').value=((r.body&&r.body.paths)||[]).join('\n'); });
   call('GET','/_analytics/api/key').then(function(r){
     if(!r.body) return;
     apiKeyFull=r.body.apiKey; apiKeyOverridden=!!r.body.overridden;
@@ -378,6 +386,13 @@ $('#mkinvite').onclick=function(){
 };
 $('#copyinvite').onclick=function(){
   try{ navigator.clipboard.writeText($('#inviteurl').value); }catch(e){}
+};
+$('#saveex').onclick=function(){
+  call('POST','/_analytics/api/excludes',{paths:$('#exval').value.split('\n')}).then(function(r){
+    if(!r.body || !r.body.paths){ $('#exmsg').textContent='Error'; return; }
+    $('#exval').value=r.body.paths.join('\n'); $('#exmsg').textContent='Saved';
+    render();
+  });
 };
 $('#revealkey').onclick=function(){
   if($('#apikeyval').value===apiKeyFull){ $('#apikeyval').value=mask(apiKeyFull); $('#revealkey').textContent='Reveal'; }
@@ -492,13 +507,13 @@ function renderOverview(){
   }
   Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []}), api('platforms?'+qs()).catch(function(){return null})]).then(function(res){
     var o=res[0], pg=res[1], sr=res[2], co=res[3]||[], pl=res[4];
+    var f=o.filtered;
     el.innerHTML=
-      '<div class="cards">'+
-        card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
-        card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+
-      '</div>'+
+      (f?'<p class="mut" style="margin:0 0 6px">All traffic</p>':'')+
+      cards(o)+
+      (f?'<p class="mut" style="margin:0 0 6px">Excluding '+o.excluded.map(esc).join(', ')+'</p>'+cards(f):'')+
       '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
-      '<div class="panel"><h3>Countries</h3><div class="grid2"><div id="cmap"></div><div>'+countriesTable(co)+'</div></div></div>'+
+      '<div class="panel"><h3>Countries</h3><div class="grid2"><div id="cmap"></div><div>'+countriesTable(co,!!f)+'</div></div></div>'+
       '<div class="grid2">'+
         '<div class="panel"><h3>Top pages</h3>'+pagesTable(pg)+'</div>'+
         '<div class="panel"><h3>Sources</h3>'+sourcesBlock(sr)+'</div>'+
@@ -509,6 +524,10 @@ function renderOverview(){
   });
 }
 function card(k,v){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+function cards(o){
+  return '<div class="cards">'+card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
+    card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+'</div>';
+}
 function pagesTable(rows){
   if(!rows.length) return '<p class="mut">No data</p>';
   var max=rows[0].pageviews||1;

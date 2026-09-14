@@ -131,3 +131,35 @@ test('gm-overlay.js is served', async () => {
   assert.match(res.text, /export function init/);
   mw.stop();
 });
+
+test('excluded paths: session-only settings route persists list, API applies it', async () => {
+  const { mw, server } = makeApp();
+  await request(server).get('/_analytics/api/excludes').expect(401);
+  await request(server).post('/_analytics/api/excludes').send({ paths: ['/x'] }).expect(401);
+
+  const login = await request(server).get('/_analytics/login?key=' + KEY).expect(302);
+  const cookie = login.headers['set-cookie'][0].split(';')[0];
+  const saved = await request(server)
+    .post('/_analytics/api/excludes')
+    .set('Cookie', cookie)
+    .send({ paths: ['https://example.com/downloads/', '/downloads'] })
+    .expect(200);
+  assert.deepStrictEqual(saved.body, { paths: ['/downloads'] });
+  const got = await request(server).get('/_analytics/api/excludes').set('Cookie', cookie).expect(200);
+  assert.deepStrictEqual(got.body, { paths: ['/downloads'] });
+  await request(server).post('/_analytics/api/excludes').set('Cookie', cookie).send({ nope: 1 }).expect(400);
+
+  const today = new Date().toISOString().slice(0, 10);
+  mw.store.insertEvents([
+    { ts: Date.now(), site_id: 'test', visitor: 'A', session_id: 'sA', type: 'pageview', path: '/', country: 'LT' },
+    { ts: Date.now(), site_id: 'test', visitor: 'B', session_id: 'sB', type: 'pageview', path: '/downloads', country: 'LT' },
+  ]);
+  const auth = { Authorization: 'Bearer ' + KEY };
+  const o = await request(server).get(`/gm/api/overview?from=${today}&to=${today}`).set(auth).expect(200);
+  assert.strictEqual(o.body.visitors, 2);
+  assert.strictEqual(o.body.filtered.visitors, 1);
+  assert.deepStrictEqual(o.body.excluded, ['/downloads']);
+  const c = await request(server).get(`/gm/api/countries?from=${today}&to=${today}`).set(auth).expect(200);
+  assert.deepStrictEqual(c.body, [{ country: 'LT', visitors: 2, visitorsFiltered: 1 }]);
+  mw.stop();
+});

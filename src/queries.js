@@ -32,37 +32,71 @@ function vwClause(bucket) {
   return '1=1';
 }
 
+// Excluded paths (owner-set, e.g. internal stats pages) are still recorded;
+// queries report numbers both with and without them. Stored normalized with no
+// trailing slash, so the event side is compared the same way. Bound as one JSON
+// param via json_each.
+const NOT_EXCLUDED = "rtrim(COALESCE(path,''),'/') NOT IN (SELECT value FROM json_each(@ex))";
+
+// Anything -> deduped list of pathnames (full URLs accepted), trailing slash stripped.
+function normalizeExcludes(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const v of list) {
+    if (typeof v !== 'string' || !v.trim()) continue;
+    let p;
+    try {
+      p = new URL(v.trim(), 'http://x').pathname.replace(/\/+$/, '').slice(0, 512);
+    } catch {
+      continue;
+    }
+    if (!out.includes(p)) out.push(p);
+  }
+  return out.slice(0, 50);
+}
+
 function overview(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to };
+  const p = { siteId: opts.siteId, from, to, ex: '[]' };
+  const o = overviewStats(db, p, '1=1');
+  const exclude = opts.exclude || [];
+  if (exclude.length) {
+    o.filtered = overviewStats(db, { ...p, ex: JSON.stringify(exclude) }, NOT_EXCLUDED);
+    o.excluded = exclude;
+  }
+  return o;
+}
+
+// extra: SQL predicate ANDed onto every event scan (pageviews, durations, sessions).
+function overviewStats(db, p, extra) {
 
   const tot = db
-    .prepare(`SELECT COUNT(*) pageviews, COUNT(DISTINCT visitor) visitors FROM events WHERE ${pvWhere()}`)
+    .prepare(`SELECT COUNT(*) pageviews, COUNT(DISTINCT visitor) visitors FROM events WHERE ${pvWhere()} AND ${extra}`)
     .get(p);
   const dur = db
     .prepare(
       `SELECT COALESCE(SUM(value_int),0) d FROM events
-       WHERE site_id=@siteId AND type='duration' AND date(ts/1000,'unixepoch') BETWEEN @from AND @to`
+       WHERE site_id=@siteId AND type='duration' AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${extra}`
     )
     .get(p);
   const sess = db
     .prepare(
       `SELECT COUNT(*) c FROM (
-         SELECT session_id, COUNT(*) pv FROM events WHERE ${pvWhere()} GROUP BY session_id
+         SELECT session_id, COUNT(*) pv FROM events WHERE ${pvWhere()} AND ${extra} GROUP BY session_id
        )`
     )
     .get(p).c;
   const bounces = db
     .prepare(
       `SELECT COUNT(*) c FROM (
-         SELECT session_id, COUNT(*) pv FROM events WHERE ${pvWhere()} GROUP BY session_id HAVING pv=1
+         SELECT session_id, COUNT(*) pv FROM events WHERE ${pvWhere()} AND ${extra} GROUP BY session_id HAVING pv=1
        )`
     )
     .get(p).c;
   const timeseries = db
     .prepare(
       `SELECT ${DAY} date, COUNT(DISTINCT visitor) visitors, COUNT(*) pageviews
-       FROM events WHERE ${pvWhere()} GROUP BY date ORDER BY date`
+       FROM events WHERE ${pvWhere()} AND ${extra} GROUP BY date ORDER BY date`
     )
     .all(p);
 
@@ -262,10 +296,11 @@ function realtime(db, opts) {
 
 function countries(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to };
+  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(opts.exclude || []) };
   return db
     .prepare(
-      `SELECT COALESCE(country,'') country, COUNT(DISTINCT visitor) visitors
+      `SELECT COALESCE(country,'') country, COUNT(DISTINCT visitor) visitors,
+         COUNT(DISTINCT CASE WHEN ${NOT_EXCLUDED} THEN visitor END) visitorsFiltered
        FROM events WHERE ${pvWhere()} GROUP BY COALESCE(country,'') ORDER BY visitors DESC`
     )
     .all(p);
@@ -297,4 +332,4 @@ function eventsList(db, opts) {
     .all({ siteId: opts.siteId, from, to });
 }
 
-module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, platforms, range, vwClause };
+module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, platforms, range, vwClause, normalizeExcludes };
