@@ -43,6 +43,37 @@ test('api good key -> 200 JSON', async () => {
   mw.stop();
 });
 
+// track() is the server-side conversion hook the /download redirect routes call;
+// it must land in the events table and surface through /gm/api/conversions.
+test('conversions: track() records a download attributed to the Referer page', async () => {
+  const { mw, server } = makeApp();
+  const req = {
+    url: '/download/meatpad',
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605',
+      host: 'example.com',
+      referer: 'https://example.com/meatpad',
+    },
+    socket: { remoteAddress: '1.2.3.4' },
+  };
+  assert.strictEqual(mw.track(req, { type: 'pageview', path: '/meatpad' }), true);
+  assert.strictEqual(mw.track(req, { name: 'meatpad' }), true);
+  assert.strictEqual(mw.track({ headers: { 'user-agent': 'Googlebot/2.1' } }, { name: 'x' }), false);
+  mw.collector.flush();
+
+  const res = await request(server)
+    .get('/gm/api/conversions')
+    .set('Authorization', 'Bearer ' + KEY)
+    .expect(200)
+    .expect('Content-Type', /json/);
+  assert.strictEqual(res.body.converted, 1);
+  assert.strictEqual(res.body.base, 1);
+  assert.strictEqual(res.body.rate, 1);
+  assert.deepStrictEqual(res.body.paths[0].path, '/meatpad'); // the page, not /download/meatpad
+  assert.strictEqual(res.body.files[0].name, 'meatpad');
+  mw.stop();
+});
+
 test('magic link login: wrong key -> 401, correct -> cookie, cookie session mints a bearer usable on the API', async () => {
   const { mw, server } = makeApp();
   await request(server).get('/_analytics/login?key=nope').expect(401);
