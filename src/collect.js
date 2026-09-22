@@ -151,20 +151,73 @@ function createCollector(store, opts) {
     return true;
   }
 
-  function ingest(body, ip, ua, lang, countryHeader) {
-    if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
+  // Identity + request context shared by the beacon and by server-side track(),
+  // so a redirect hit and a browser beacon resolve to the same visitor.
+  function stampFor(ip, ua, lang, countryHeader) {
     const ts = Date.now();
     const dateStr = new Date(ts).toISOString().slice(0, 10);
     const salt = getSalt(store.db, dateStr);
     const visitor = visitorHash({ salt, ip, ua, siteId });
     const session = resolveSession(store.db, visitor, ts);
-    const country = resolveCountry(countryHeader);
     const plat = parseUA(ua);
-    const stamp = { ts, siteId, visitor, session, country, browser: plat.browser, os: plat.os, device: plat.device, lang: parseLang(lang) };
+    return {
+      ts, siteId, visitor, session,
+      country: resolveCountry(countryHeader),
+      browser: plat.browser, os: plat.os, device: plat.device,
+      lang: parseLang(lang),
+    };
+  }
+
+  function ingest(body, ip, ua, lang, countryHeader) {
+    if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
+    const stamp = stampFor(ip, ua, lang, countryHeader);
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
       const row = mapEvent(ev, stamp);
       if (row) queue.push(row);
     }
+  }
+
+  // Client IP, honoring the first X-Forwarded-For hop (same rule as middleware).
+  function ipOf(req) {
+    const xff = req.headers['x-forwarded-for'];
+    return (xff ? String(xff).split(',')[0].trim() : '') || (req.socket && req.socket.remoteAddress) || '';
+  }
+
+  // Same-host Referer pathname, else the request's own path. A conversion is
+  // most useful attributed to the page the visitor clicked FROM, not to the
+  // /download redirect route they were sent through.
+  function sourcePath(req) {
+    const self = String(req.url || '/').split('?')[0];
+    const ref = req.headers.referer || req.headers.referrer;
+    if (typeof ref !== 'string' || !ref) return self;
+    try {
+      const u = new URL(ref);
+      const host = String(req.headers.host || '').toLowerCase();
+      return host && u.host.toLowerCase() === host ? u.pathname : self;
+    } catch {
+      return self;
+    }
+  }
+
+  // Server-side conversion recording, e.g. from a /download/:app redirect route:
+  //   analytics.track(req, { name: req.params.app })
+  // Survives ad blockers and no-JS, and counts middle-click/direct-link hits.
+  // Same bot + DNT rules as the beacon. Returns whether it recorded.
+  function track(req, ev) {
+    if (!req || !req.headers) return false;
+    const ua = req.headers['user-agent'] || '';
+    if (!ua || BOT_RE.test(ua)) return false;
+    if (opts.respectDNT && req.headers.dnt === '1') return false;
+    const e = ev || {};
+    const type = TYPES.has(e.type) ? e.type : 'download';
+    const stamp = stampFor(ipOf(req), ua, req.headers['accept-language'], req.headers['cf-ipcountry']);
+    const row = mapEvent(
+      { t: type, p: e.path || sourcePath(req), f: e.name, n: e.name, pr: e.props },
+      stamp
+    );
+    if (!row) return false;
+    queue.push(row);
+    return true;
   }
 
   function middleware(req, res) {
@@ -175,8 +228,7 @@ function createCollector(store, opts) {
     };
     const ua = req.headers['user-agent'] || '';
     const lang = req.headers['accept-language'];
-    const xff = req.headers['x-forwarded-for'];
-    const ip = (xff ? String(xff).split(',')[0].trim() : '') || req.socket.remoteAddress || '';
+    const ip = ipOf(req);
 
     if (!ua || BOT_RE.test(ua)) return done();
     if (opts.respectDNT && req.headers.dnt === '1') return done();
@@ -237,7 +289,7 @@ function createCollector(store, opts) {
     flush();
   }
 
-  return { middleware, flush, stop };
+  return { middleware, track, flush, stop };
 }
 
 module.exports = { createCollector, classifyRef, mapEvent, resolveCountry, parseUA, parseLang };

@@ -399,6 +399,8 @@ module.exports = function analytics(opts) {
 
   mw.store = store;
   mw.collector = collector;
+  // Server-side conversion hook: analytics.track(req, { name: 'meatpad' })
+  mw.track = (req, ev) => collector.track(req, ev);
   mw.auth = auth;
   mw.stop = () => {
     collector.stop();

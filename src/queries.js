@@ -240,6 +240,69 @@ function funnel(db, opts) {
   }));
 }
 
+// Download conversions. "Success" = a download event (tracker click on a file
+// link, or a server-side track() hit on a /download route) -- the browser
+// actually asked for the file; whether the bytes landed is unknowable when the
+// asset lives on GitHub releases.
+//
+// Rate is computed from counts, never by averaging daily percentages, and the
+// unit is visitor-DAYS: getSalt() rotates the visitor salt at UTC midnight, so
+// COUNT(DISTINCT visitor) across a multi-day range counts person-days anyway.
+// Making that explicit with date||visitor keeps numerator and denominator on
+// the same unit in the per-path and total rows.
+const VDAY = (type) =>
+  `COUNT(DISTINCT CASE WHEN type='${type}' THEN ${DAY}||visitor END)`;
+
+function conversions(db, opts) {
+  const { from, to } = range(opts);
+  const exclude = opts.exclude || [];
+  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(exclude) };
+  const extra = exclude.length ? NOT_EXCLUDED : '1=1';
+  const where = `site_id=@siteId AND type IN ('pageview','download')
+      AND ${DAY} BETWEEN @from AND @to AND ${extra}`;
+
+  const timeseries = db
+    .prepare(
+      `SELECT ${DAY} date, ${VDAY('pageview')} base, ${VDAY('download')} converted
+       FROM events WHERE ${where} GROUP BY date ORDER BY date`
+    )
+    .all(p);
+  const paths = db
+    .prepare(
+      `SELECT COALESCE(path,'') path, ${VDAY('pageview')} base, ${VDAY('download')} converted
+       FROM events WHERE ${where} GROUP BY COALESCE(path,'')
+       HAVING base > 0 OR converted > 0
+       ORDER BY converted DESC, base DESC LIMIT 100`
+    )
+    .all(p);
+  const files = db
+    .prepare(
+      `SELECT name, ${VDAY('download')} converted, COUNT(*) clicks FROM events
+       WHERE site_id=@siteId AND type='download' AND name IS NOT NULL AND name<>''
+         AND ${DAY} BETWEEN @from AND @to AND ${extra}
+       GROUP BY name ORDER BY converted DESC LIMIT 50`
+    )
+    .all(p);
+
+  let base = 0;
+  let converted = 0;
+  for (const r of timeseries) {
+    base += r.base;
+    converted += r.converted;
+  }
+  return {
+    from,
+    to,
+    base,
+    converted,
+    rate: base ? converted / base : 0,
+    timeseries,
+    paths,
+    files,
+    excluded: exclude,
+  };
+}
+
 function heatmap(db, opts) {
   const bucket = vwClause(opts.vwBucket);
   if (opts.kind === 'mouse') {
@@ -332,4 +395,4 @@ function eventsList(db, opts) {
     .all({ siteId: opts.siteId, from, to });
 }
 
-module.exports = { overview, pages, sources, flows, funnel, heatmap, realtime, eventsList, countries, platforms, range, vwClause, normalizeExcludes };
+module.exports = { overview, pages, sources, flows, funnel, conversions, heatmap, realtime, eventsList, countries, platforms, range, vwClause, normalizeExcludes };

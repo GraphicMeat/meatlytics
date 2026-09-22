@@ -278,3 +278,48 @@ test('countries: visitorsFiltered alongside visitors, not subtractive', () => {
   for (const r of Q.countries(store.db, RANGE)) assert.strictEqual(r.visitorsFiltered, r.visitors);
   store.close();
 });
+
+// Download conversions: rate must come from summed counts, be per-visitor-day
+// (repeat clicks collapse), and survive a zero-pageview day without NaN.
+test('conversions: visitor-day rate, repeat clicks collapse, no divide-by-zero', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  store.insertEvents([
+    // A downloads twice from /pricing on D2 -> one converted visitor-day
+    { ts: at(D2, '10:05'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'download', path: '/pricing', name: 'App.dmg' },
+    { ts: at(D2, '10:06'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'download', path: '/pricing', name: 'App.dmg' },
+    // D downloads on D1 from /pricing
+    { ts: at(D1, '09:05'), site_id: SITE, visitor: 'D', session_id: 'sD', type: 'download', path: '/pricing', name: 'Other.dmg' },
+  ]);
+  const c = Q.conversions(store.db, RANGE);
+  assert.strictEqual(c.base, 4); // A,B,C on D2 + D on D1 (visitor-days)
+  assert.strictEqual(c.converted, 2); // A on D2, D on D1 -- A's two clicks count once
+  assert.strictEqual(c.rate, 2 / 4);
+
+  const d2 = c.timeseries.find((r) => r.date === D2);
+  assert.strictEqual(d2.base, 3);
+  assert.strictEqual(d2.converted, 1);
+
+  const pricing = c.paths.find((r) => r.path === '/pricing');
+  assert.strictEqual(pricing.base, 3); // A,B on D2 + D on D1
+  assert.strictEqual(pricing.converted, 2);
+  assert.strictEqual(c.files.find((f) => f.name === 'App.dmg').clicks, 2);
+
+  // empty range -> 0, never NaN
+  const none = Q.conversions(store.db, { siteId: SITE, from: '2026-01-01', to: '2026-01-02' });
+  assert.strictEqual(none.rate, 0);
+  assert.strictEqual(none.converted, 0);
+  store.close();
+});
+
+test('conversions: excluded paths drop out of both numerator and denominator', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  store.insertEvents([
+    { ts: at(D2, '10:05'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'download', path: '/pricing', name: 'App.dmg' },
+  ]);
+  const c = Q.conversions(store.db, { ...RANGE, exclude: ['/pricing'] });
+  assert.strictEqual(c.converted, 0);
+  assert.ok(!c.paths.some((r) => r.path === '/pricing'));
+  store.close();
+});

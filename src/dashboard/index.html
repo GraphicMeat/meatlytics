@@ -122,6 +122,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <button data-v="overview" class="on">Overview</button>
     <button data-v="flows">Flows</button>
     <button data-v="funnels">Funnels</button>
+    <button data-v="downloads">Downloads</button>
     <button data-v="heatmaps">Heatmaps</button>
     <button data-v="realtime">Realtime</button>
   </nav>
@@ -140,6 +141,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
   <section id="v-overview"></section>
   <section id="v-flows" class="hidden"></section>
   <section id="v-funnels" class="hidden"></section>
+  <section id="v-downloads" class="hidden"></section>
   <section id="v-heatmaps" class="hidden"></section>
   <section id="v-realtime" class="hidden"></section>
 </main>
@@ -483,6 +485,7 @@ function render(){
   if(state.view==='overview') renderOverview();
   else if(state.view==='flows') renderFlows();
   else if(state.view==='funnels') renderFunnels();
+  else if(state.view==='downloads') renderDownloads();
   else if(state.view==='heatmaps') renderHeatmaps();
   else if(state.view==='realtime') renderRealtime();
   api('realtime').then(function(d){ $('#live').textContent='● '+d.active+' now'; }).catch(function(){});
@@ -580,6 +583,76 @@ function drawTS(data){
   data.forEach(function(d,i){
     var x=pad+i*bw+bw/2, y=pad+ch-(d.visitors/max*ch);
     i?g.lineTo(x,y):g.moveTo(x,y);
+  });
+  g.stroke();
+  g.fillStyle='#8b8b93';g.font='10px system-ui';
+  if(n>1){ g.fillText(data[0].date.slice(5),pad,H-8); g.fillText(data[n-1].date.slice(5),W-pad-24,H-8); }
+}
+
+// ---------- Downloads (conversion rate) ----------
+// Rate = visitors who asked for a file / visitors who saw the page, per day.
+// Summed from counts, never averaged from daily percentages.
+function renderDownloads(){
+  var el=$('#v-downloads');
+  el.innerHTML='<p class="mut">Loading…</p>';
+  api('conversions?'+qs()).then(function(d){
+    el.innerHTML=
+      '<div class="cards">'+card('Success rate',pct(d.rate))+card('Downloads',d.converted)+
+        card('Visitors',d.base)+'</div>'+
+      (d.excluded&&d.excluded.length?'<p class="mut" style="margin:0 0 6px">Excluding '+d.excluded.map(esc).join(', ')+'</p>':'')+
+      '<div class="panel"><h3>Success rate</h3><canvas id="convts" height="220"></canvas>'+
+        '<p class="mut" style="margin:8px 0 0">A download counts when the visitor asks for the file; delivery of the bytes is not observable for GitHub-hosted assets.</p></div>'+
+      '<div class="grid2">'+
+        '<div class="panel"><h3>By page</h3>'+convPaths(d.paths)+'</div>'+
+        '<div class="panel"><h3>By file</h3>'+convFiles(d.files)+'</div>'+
+      '</div>';
+    drawRate(d.timeseries);
+  }).catch(function(){ el.innerHTML='<p class="mut">No data</p>'; });
+}
+function convPaths(rows){
+  rows=(rows||[]).filter(function(r){return r.base||r.converted});
+  if(!rows.length) return '<p class="mut">No data</p>';
+  return '<table><tr><th>Path</th><th class="n">Visitors</th><th class="n">Downloads</th><th class="n">Rate</th></tr>'+
+    rows.slice(0,15).map(function(r){
+      return '<tr><td>'+esc(r.path)+'</td><td class="n">'+r.base+'</td><td class="n">'+r.converted+'</td>'+
+        '<td class="n">'+(r.base?pct(r.converted/r.base):'—')+'</td></tr>';
+    }).join('')+'</table>';
+}
+function convFiles(rows){
+  if(!rows||!rows.length) return '<p class="mut">No downloads yet</p>';
+  return '<table><tr><th>File</th><th class="n">Downloads</th><th class="n">Clicks</th></tr>'+
+    rows.slice(0,15).map(function(r){
+      return '<tr><td>'+esc(r.name)+'</td><td class="n">'+r.converted+'</td><td class="n">'+r.clicks+'</td></tr>';
+    }).join('')+'</table>';
+}
+// Daily rate line. Y axis is %, so a redesign that converts worse shows as a
+// step down even when traffic moves; raw counts would hide it.
+function drawRate(data){
+  var c=$('#convts'); if(!c)return;
+  var dpr=window.devicePixelRatio||1, W=c.clientWidth, H=220;
+  c.width=W*dpr; c.height=H*dpr; var g=c.getContext('2d'); g.scale(dpr,dpr);
+  g.clearRect(0,0,W,H);
+  data=data||[];
+  if(!data.length){ g.fillStyle='#8b8b93'; g.fillText('No data',10,20); return; }
+  var pad=32, cw=W-pad*2, ch=H-pad*2;
+  var max=0; data.forEach(function(d){ if(d.base) max=Math.max(max,d.converted/d.base); });
+  max=Math.max(max,0.01); max=Math.min(1,max*1.2);
+  g.strokeStyle='#2a2a30'; g.lineWidth=1; g.font='11px system-ui';
+  for(var i=0;i<=4;i++){ var y=pad+ch*i/4; g.beginPath();g.moveTo(pad,y);g.lineTo(W-pad,y);g.stroke();
+    g.fillStyle='#8b8b93';g.fillText((max*(1-i/4)*100).toFixed(1)+'%',2,y+3); }
+  var n=data.length, bw=cw/n;
+  // visitors bars (context: a rate off 3 visitors is noise)
+  var vmax=1; data.forEach(function(d){ vmax=Math.max(vmax,d.base); });
+  data.forEach(function(d,i){
+    var h=d.base/vmax*ch*0.35, x=pad+i*bw+bw*0.25, w=bw*0.5, y=pad+ch-h;
+    g.fillStyle='rgba(232,69,31,.25)'; g.fillRect(x,y,w,h);
+  });
+  g.strokeStyle='#3ecf8e'; g.lineWidth=2; g.beginPath();
+  var started=false;
+  data.forEach(function(d,i){
+    if(!d.base) return;
+    var x=pad+i*bw+bw/2, y=pad+ch-(Math.min(d.converted/d.base,max)/max*ch);
+    started?g.lineTo(x,y):g.moveTo(x,y); started=true;
   });
   g.stroke();
   g.fillStyle='#8b8b93';g.font='10px system-ui';

@@ -190,3 +190,24 @@ test('an existing world-readable db is tightened on open', () => {
   openStore(dbPath).close();
   assert.strictEqual(fs.statSync(dbPath).mode & 0o777, 0o600);
 });
+
+test('rollupDay: daily_downloads keeps per-page conversion counts', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  store.insertEvents([
+    { ts: at(DAY, '10:09'), site_id: SITE, visitor: 'A', session_id: 's1', type: 'download', path: '/home', name: 'App.dmg' },
+    { ts: at(DAY, '10:10'), site_id: SITE, visitor: 'A', session_id: 's1', type: 'download', path: '/home', name: 'App.dmg' },
+  ]);
+  store.rollupDay(DAY);
+  const row = store.db
+    .prepare('SELECT * FROM daily_downloads WHERE date=? AND site_id=? AND path=?')
+    .get(DAY, SITE, '/home');
+  assert.strictEqual(row.converted, 1); // A's two clicks are one converted visitor
+  assert.strictEqual(row.base, 2); // A and B both saw /home
+  // idempotent: rolling the same day twice must not duplicate or double-count
+  store.rollupDay(DAY);
+  const again = store.db
+    .prepare('SELECT * FROM daily_downloads WHERE date=? AND site_id=? AND path=?')
+    .get(DAY, SITE, '/home');
+  assert.deepStrictEqual(again, row);
+});

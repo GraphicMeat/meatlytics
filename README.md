@@ -24,6 +24,7 @@ Add one script tag. No configuration, no event wiring:
 - **Funnels** — built ad-hoc in the dashboard from pages or custom events, computed retroactively — no pre-registration
 - **Click + mouse heatmaps** — rendered as an overlay on your live page, per viewport class (mobile/tablet/desktop)
 - **Outbound links, file downloads, form submits** (form id only — never field values)
+- **Download conversions** — daily success rate (visitors who asked for a file ÷ visitors who saw the page), per page and per file, in the Downloads tab
 - **Scroll depth, time on page** (visible time, not wall-clock)
 - **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
 - **Countries** — visitor country per date range + live world map, read at ingest from Cloudflare's `CF-IPCountry` edge header (no geo database, no external API, IP still never stored; deployments not behind Cloudflare record no country)
@@ -40,6 +41,30 @@ gm('pricing-viewed', { plan: 'pro' });
 
 (The stub queues calls made before the tracker loads; drop it if you only call
 `gm()` from user interactions.)
+
+### Server-side conversions
+
+The tracker only sees links whose href ends in a file extension. If your
+download CTA goes through a redirect route (`/download/:app` → GitHub
+releases), record it server-side instead — ad blockers, no-JS and middle-click
+all still count:
+
+```js
+const analytics = require('meatlytics');
+const track = analytics({ siteId: 'mysite', dbPath: '/var/lib/meatlytics/mysite.db' });
+app.use(track);
+
+app.get('/download/:app', async (req, res) => {
+  track.track(req, { name: req.params.app });   // { type = 'download', name, path, props }
+  res.redirect(302, await latestDmg(req.params.app));
+});
+```
+
+It reuses the beacon's identity, bot filter and DNT rule, and attributes the
+conversion to the same-origin `Referer` page — the page the visitor clicked
+from, not the redirect route — so the Downloads tab reads as a per-page
+conversion rate. A "download" means the visitor asked for the file; whether the
+bytes landed isn't observable when the asset is hosted elsewhere.
 
 ## Install
 
@@ -168,6 +193,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/heatmap` | Click/mouse density per page + viewport | " (or short-lived overlay token) |
 | `GET /gm/api/realtime` | Active visitors, last 5 min | " |
 | `GET /gm/api/events` | Custom event counts | " |
+| `GET /gm/api/conversions` | Download success rate: daily counts, per page, per file | " |
 | `GET /gm/api/countries` | Visitors per country | " |
 | `GET /gm/world.svg` | World map asset for the dashboard | public |
 | `GET /gm/api/hub/overview` | All sites (local + peers) | " |

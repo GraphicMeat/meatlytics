@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS daily_events(
   count INTEGER, uniques INTEGER,
   PRIMARY KEY(date, site_id, name)
 );
+CREATE TABLE IF NOT EXISTS daily_downloads(
+  date TEXT, site_id TEXT, path TEXT,
+  converted INTEGER, base INTEGER,
+  PRIMARY KEY(date, site_id, path)
+);
 CREATE TABLE IF NOT EXISTS daily_countries(
   date TEXT, site_id TEXT, country TEXT,
   visitors INTEGER,
@@ -138,6 +143,7 @@ class Store {
       db.prepare('DELETE FROM daily_sources WHERE date=?').run(date);
       db.prepare('DELETE FROM daily_events WHERE date=?').run(date);
       db.prepare('DELETE FROM daily_countries WHERE date=?').run(date);
+      db.prepare('DELETE FROM daily_downloads WHERE date=?').run(date);
       db.prepare('DELETE FROM daily_platforms WHERE date=?').run(date);
 
       db.prepare(
@@ -195,6 +201,19 @@ class Store {
          SELECT ?, site_id, COALESCE(country,''), COUNT(DISTINCT visitor)
          FROM events WHERE type='pageview' AND ${DATE_EXPR}=?
          GROUP BY site_id, COALESCE(country,'')`
+      ).run(date, date);
+
+      // Download conversions per page: distinct visitors who asked for a file vs
+      // distinct visitors who saw the page. Raw events die at prune(90); this is
+      // what survives for long-range redesign comparison.
+      db.prepare(
+        `INSERT INTO daily_downloads(date, site_id, path, converted, base)
+         SELECT ?, site_id, COALESCE(path,''),
+           COUNT(DISTINCT CASE WHEN type='download' THEN visitor END),
+           COUNT(DISTINCT CASE WHEN type='pageview' THEN visitor END)
+         FROM events
+         WHERE type IN ('pageview','download') AND ${DATE_EXPR}=?
+         GROUP BY site_id, COALESCE(path,'')`
       ).run(date, date);
 
       db.prepare(
