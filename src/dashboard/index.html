@@ -123,10 +123,12 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <button data-v="flows">Flows</button>
     <button data-v="funnels">Funnels</button>
     <button data-v="downloads">Downloads</button>
+    <button data-v="compare">Compare</button>
     <button data-v="heatmaps">Heatmaps</button>
     <button data-v="realtime">Realtime</button>
   </nav>
   <select id="siteSel" class="hidden"></select>
+  <select id="tagSel" title="Tag (data-tag)"><option value="">All tags</option><option value="none">Untagged</option></select>
   <span class="spacer"></span>
   <div class="range" id="range">
     <button data-p="1">Day</button>
@@ -142,6 +144,7 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
   <section id="v-flows" class="hidden"></section>
   <section id="v-funnels" class="hidden"></section>
   <section id="v-downloads" class="hidden"></section>
+  <section id="v-compare" class="hidden"></section>
   <section id="v-heatmaps" class="hidden"></section>
   <section id="v-realtime" class="hidden"></section>
 </main>
@@ -154,7 +157,7 @@ var BASE = '%BASE%';
 var PREVIEW = '%PREVIEW%'; // same-origin proxy route for the heatmap iframe ('' = frame the path directly)
 var $ = function(s,r){return (r||document).querySelector(s)};
 var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
-var state = {view:'overview', site:'local', from:'', to:'', rtTimer:0};
+var state = {view:'overview', site:'local', from:'', to:'', tag:'', rtTimer:0};
 
 function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function pct(x){ return (x*100).toFixed(1)+'%'; }
@@ -166,7 +169,7 @@ function api(path){
     return r.json();
   });
 }
-function qs(){ return 'from='+state.from+'&to='+state.to; }
+function qs(){ return 'from='+state.from+'&to='+state.to+(state.tag?'&tag='+encodeURIComponent(state.tag):''); }
 
 // ---------- World map ----------
 var MAP=null; // cached fetch promise -> svg text or null
@@ -210,7 +213,20 @@ function countriesTable(rows,ex){
 }
 
 function showLogin(){ $('#app').classList.add('hidden'); $('#login').style.display='flex'; }
-function showApp(){ $('#login').style.display='none'; $('#app').classList.remove('hidden'); render(); }
+function showApp(){ $('#login').style.display='none'; $('#app').classList.remove('hidden'); loadTags(); render(); }
+
+// ---------- Tag filter (data-tag on the tracked site) ----------
+// Fetched after login (401s before). '' = all traffic, 'none' = untagged only.
+var TAGS=null;
+function loadTags(){
+  return TAGS||(TAGS=api('tags').then(function(rows){
+    $('#tagSel').innerHTML='<option value="">All tags</option><option value="none">Untagged</option>'+
+      rows.filter(function(r){return r.tag}).map(function(r){return '<option value="'+esc(r.tag)+'">'+esc(r.tag)+'</option>'}).join('');
+    $('#tagSel').value=state.tag;
+    return rows;
+  }).catch(function(){ TAGS=null; return []; }));
+}
+$('#tagSel').onchange=function(){ state.tag=this.value; render(); };
 
 // ---------- b64url <-> ArrayBuffer ----------
 function b64uToBuf(s){
@@ -486,6 +502,7 @@ function render(){
   else if(state.view==='flows') renderFlows();
   else if(state.view==='funnels') renderFunnels();
   else if(state.view==='downloads') renderDownloads();
+  else if(state.view==='compare') renderCompare();
   else if(state.view==='heatmaps') renderHeatmaps();
   else if(state.view==='realtime') renderRealtime();
   api('realtime').then(function(d){ $('#live').textContent='● '+d.active+' now'; }).catch(function(){});
@@ -659,6 +676,48 @@ function drawRate(data){
   if(n>1){ g.fillText(data[0].date.slice(5),pad,H-8); g.fillText(data[n-1].date.slice(5),W-pad-24,H-8); }
 }
 
+// ---------- Compare (before/after, e.g. old site vs a redesign's data-tag) ----------
+// Segments are self-contained, so this builds its own query instead of qs():
+// tag:/untagged cover all retained data, date:A..B a fixed window.
+function day(n){ return new Date(Date.now()+n*864e5).toISOString().slice(0,10); }
+function renderCompare(){
+  // ids avoid 2-letter names: no doctype = quirks mode, where #ca would match the map's <path id="CA">
+  if($('#cmpa')) return; // keep the inputs across range/tag changes
+  $('#v-compare').innerHTML='<div class="panel"><h3>Compare segments</h3><div class="row">'+
+    'A <input id="cmpa" style="width:230px">B <input id="cmpb" style="width:230px">'+
+    'Split by prop <input id="cmpby" placeholder="optional" style="width:120px">'+
+    '<button id="cmpgo" class="on">Compare</button></div>'+
+    '<p class="mut" style="margin:0">Segments: <code>untagged</code>, <code>tag:name</code> or <code>date:YYYY-MM-DD..YYYY-MM-DD</code>. '+
+    'Tag segments cover all retained data (90 days); the toolbar range and tag do not apply here.</p></div><div id="cmpres"></div>';
+  $('#cmpgo').onclick=loadCompare;
+  // untagged (old site) vs the newest tag; no tags yet -> last week vs this week
+  loadTags().then(function(rows){
+    var t=rows.filter(function(r){return r.tag})[0];
+    $('#cmpa').value=t?'untagged':'date:'+day(-13)+'..'+day(-7);
+    $('#cmpb').value=t?'tag:'+t.tag:'date:'+day(-6)+'..'+day(0);
+    loadCompare();
+  });
+}
+function loadCompare(){
+  var by=$('#cmpby').value.trim();
+  var q='a='+encodeURIComponent($('#cmpa').value.trim())+'&b='+encodeURIComponent($('#cmpb').value.trim())+(by?'&by='+encodeURIComponent(by):'');
+  $('#cmpres').innerHTML='<p class="mut">Loading…</p>';
+  api('compare?'+q).then(function(d){
+    if(d.error){ $('#cmpres').innerHTML='<p class="mut">'+esc(d.error)+'</p>'; return; }
+    function seg(k,s){ return '<p class="mut" style="margin:0 0 6px">'+k+' · '+esc(s.segment)+'</p><div class="cards">'+
+      card('Visitors',s.visitors)+card('Pageviews',s.pageviews)+card('Sessions',s.sessions)+card('Bounce rate',pct(s.bounceRate))+'</div>'; }
+    $('#cmpres').innerHTML=seg('A',d.a)+seg('B',d.b)+'<div class="panel"><h3>Events</h3>'+(d.rows.length?
+      '<table><tr><th>Event</th><th class="n">A uniques</th><th class="n">A rate</th><th class="n">B uniques</th><th class="n">B rate</th><th class="n">Δ rate</th></tr>'+
+      d.rows.map(function(r){
+        var c=r.delta>0?'var(--ok)':r.delta<0?'var(--acc)':'var(--mut)';
+        return '<tr><td>'+esc(r.name)+'</td><td class="n">'+r.a.uniques+'</td><td class="n">'+pct(r.a.rate)+'</td>'+
+          '<td class="n">'+r.b.uniques+'</td><td class="n">'+pct(r.b.rate)+'</td>'+
+          '<td class="n" style="color:'+c+'">'+(r.delta>0?'+':'')+(r.delta*100).toFixed(1)+' pts</td></tr>';
+      }).join('')+'</table>':'<p class="mut">No custom events in either segment</p>')+
+      '<p class="mut" style="margin:8px 0 0">Rate = visitors who fired the event ÷ segment visitors.</p></div>';
+  }).catch(function(){ $('#cmpres').innerHTML='<p class="mut">No data</p>'; });
+}
+
 // ---------- Flows ----------
 function renderFlows(){
   var el=$('#v-flows');
@@ -756,9 +815,9 @@ function renderRealtime(){
 
 // ---------- boot ----------
 setRange(7);
-// deep link: #flows / #funnels / #heatmaps / #realtime selects that view on load
+// deep link: #flows / #funnels / #compare / #heatmaps / #realtime selects that view on load
 var dl=location.hash.slice(1);
-if(['flows','funnels','heatmaps','realtime'].indexOf(dl)>=0){
+if(['flows','funnels','compare','heatmaps','realtime'].indexOf(dl)>=0){
   state.view=dl;
   $$('#nav button').forEach(function(x){x.classList.toggle('on', x.dataset.v===dl)});
   $$('main > section').forEach(function(s){s.classList.add('hidden')});
