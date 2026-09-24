@@ -8,8 +8,8 @@ analytics data stays on your server — no third-party requests, ever, from the
 client or the backend. That's a build gate, not a promise.
 
 ```
-tracker         1.6 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
-dashboard       6.3 KB gzipped   single self-contained HTML file, no framework
+tracker         1.8 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
+dashboard      12.8 KB gzipped   single self-contained HTML file, no framework
 dependencies    1                (better-sqlite3)
 collect
 throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
@@ -65,6 +65,87 @@ conversion to the same-origin `Referer` page — the page the visitor clicked
 from, not the redirect route — so the Downloads tab reads as a per-page
 conversion rate. A "download" means the visitor asked for the file; whether the
 bytes landed isn't observable when the asset is hosted elsewhere.
+
+### Tags: compare a redesign against the old site
+
+Label a version of the site with a tag and every event from those pages carries
+it. Set it on the script tag:
+
+```html
+<script defer src="/gm.js" data-tag="redesign-2026-09"></script>
+```
+
+or, when the script tag is shared across templates, with a meta tag (the
+tracker reads it once at load, so keep `defer` or put the meta first):
+
+```html
+<meta name="gm-tag" content="redesign-2026-09">
+```
+
+A tag is up to 64 characters of `A-Z a-z 0-9 . _ : -`. Anything else (and the
+reserved word `none`) is stored as untagged. Pages without a tag send none.
+
+- **Filter:** every stats endpoint takes `?tag=`. Leave it out for all traffic,
+  use `tag=none` for untagged traffic only, or pass a tag name for an exact match.
+  The dashboard's tag menu applies it to every range view. Compare, Heatmaps and
+  Realtime don't use it.
+- **`GET /gm/api/tags`** lists each tag in the retained raw events (all time,
+  so the last 90 days), newest first. Untagged traffic is always included as
+  `tag: null`:
+
+  ```json
+  [
+    { "tag": "redesign-2026-09", "visitors": 412, "pageviews": 1033, "first": "2026-09-10", "last": "2026-09-25" },
+    { "tag": null, "visitors": 2210, "pageviews": 5120, "first": "2026-06-27", "last": "2026-09-10" }
+  ]
+  ```
+
+- **`GET /gm/api/compare?a=<segment>&b=<segment>[&by=<propKey>]`** returns
+  visitors, pageviews, sessions, bounce rate and the custom events of two
+  segments side by side. A segment is one of:
+  - `untagged`
+  - `tag:<name>`
+  - `date:YYYY-MM-DD..YYYY-MM-DD` (inclusive UTC days, any tag)
+
+  Tag segments cover all retained data unless the request adds `from`/`to`.
+  An event's `rate` is the visitors who fired it divided by the segment's
+  visitors. Both counts are visitor-days, because the identity salt rotates
+  daily. `by=<propKey>` splits each event by that prop, so `home_cta` becomes
+  `home_cta:demo`, `home_cta:download` and so on. Events without the prop keep
+  their bare name. A malformed segment returns `400 {"error": ...}`.
+
+The redesign workflow: ship the new site with `data-tag="redesign-2026-09"` and
+fire the same CTA events on both versions (`gm('home_cta', { cta: 'demo' })`).
+Then compare the old site with the new one:
+
+```
+GET /gm/api/compare?a=untagged&b=tag:redesign-2026-09&by=cta
+```
+
+```json
+{
+  "a": { "segment": "untagged", "visitors": 2210, "pageviews": 5120, "sessions": 2398, "bounceRate": 0.61,
+         "events": [{ "name": "home_cta:demo", "count": 150, "uniques": 132, "rate": 0.0597 }], "...": "..." },
+  "b": { "segment": "tag:redesign-2026-09", "visitors": 412, "...": "..." },
+  "rows": [
+    { "name": "home_cta:demo",
+      "a": { "count": 150, "uniques": 132, "rate": 0.0597 },
+      "b": { "count": 41, "uniques": 37, "rate": 0.0898 },
+      "delta": 0.0301 }
+  ]
+}
+```
+
+`delta` is `b.rate - a.rate`, and rows are sorted by combined uniques. If the
+old site never set a tag, compare date ranges on either side of the launch
+instead: `a=date:2026-08-10..2026-09-09&b=date:2026-09-10..2026-10-09`. The
+dashboard's **Compare** view (`/_analytics#compare`) does all of this in a
+table.
+
+Tags live on raw events only, not in the daily rollups, so both sides of a
+comparison must fall inside the 90-day raw retention. Events recorded with
+`track()` are always untagged. With a tag selected, the Downloads rate
+therefore leaves out server-side downloads.
 
 ## Install
 
@@ -195,10 +276,15 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/events` | Custom event counts | " |
 | `GET /gm/api/conversions` | Download success rate: daily counts, per page, per file | " |
 | `GET /gm/api/countries` | Visitors per country | " |
+| `GET /gm/api/platforms` | Browsers, OS, devices, languages | " |
+| `GET /gm/api/tags` | Tags seen (all retained data) + untagged, with visitors/pageviews/first/last day | " |
+| `GET /gm/api/compare` | Two segments side by side: `?a=untagged&b=tag:x[&by=prop]` | " |
 | `GET /gm/world.svg` | World map asset for the dashboard | public |
 | `GET /gm/api/hub/overview` | All sites (local + peers) | " |
 
-All stats endpoints take `?from=YYYY-MM-DD&to=YYYY-MM-DD`.
+All stats endpoints take `?from=YYYY-MM-DD&to=YYYY-MM-DD` and an optional
+`&tag=` (`none` = untagged only). `tags` ignores both. `compare` ignores `tag`
+and applies `from`/`to` to tag segments only.
 
 ## Privacy
 
