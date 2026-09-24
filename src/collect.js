@@ -70,6 +70,14 @@ function resolveCountry(header) {
   return /^[A-Z]{2}$/.test(c) && c !== 'XX' && c !== 'T1' ? c : null;
 }
 
+// Site-set batch label (data-tag / <meta name="gm-tag">), e.g. 'redesign-2026-09'.
+// Trimmed, <=64 chars of [A-Za-z0-9._:-]; anything else -> null (untagged).
+// 'none' is reserved: ?tag=none filters for untagged rows.
+function cleanTag(v) {
+  const t = typeof v === 'string' ? v.trim() : '';
+  return /^[A-Za-z0-9._:-]{1,64}$/.test(t) && t !== 'none' ? t : null;
+}
+
 function num(v) {
   return Number.isFinite(v) ? v : null;
 }
@@ -91,6 +99,7 @@ function mapEvent(ev, stamp) {
     os: stamp.os,
     device: stamp.device,
     lang: stamp.lang,
+    tag: stamp.tag || null,
     type: t,
     path: str(ev.p, 512),
     name: null,
@@ -171,6 +180,7 @@ function createCollector(store, opts) {
   function ingest(body, ip, ua, lang, countryHeader) {
     if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
     const stamp = stampFor(ip, ua, lang, countryHeader);
+    stamp.tag = cleanTag(body.g); // batch-level: one page load, one tag
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
       const row = mapEvent(ev, stamp);
       if (row) queue.push(row);
@@ -292,4 +302,4 @@ function createCollector(store, opts) {
   return { middleware, track, flush, stop };
 }
 
-module.exports = { createCollector, classifyRef, mapEvent, resolveCountry, parseUA, parseLang };
+module.exports = { createCollector, classifyRef, mapEvent, resolveCountry, parseUA, parseLang, cleanTag };

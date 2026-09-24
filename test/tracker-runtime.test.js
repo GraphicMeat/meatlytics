@@ -34,7 +34,10 @@ function makeSandbox(opts = {}) {
   const doc = Object.assign(eventTarget(), {
     currentScript: {
       src: opts.scriptSrc,
-      dataset: { site: opts.site || 'site.test', respectDnt: opts.respectDnt },
+      dataset: { site: opts.site || 'site.test', respectDnt: opts.respectDnt, tag: opts.tag },
+    },
+    querySelector(sel) {
+      return sel === 'meta[name="gm-tag"]' && opts.metaTag != null ? { content: opts.metaTag } : null;
     },
     documentElement: { scrollHeight: opts.scrollHeight || 1000 },
     referrer: opts.referrer || '',
@@ -393,4 +396,26 @@ test('tracker: broken localStorage -> tracking still works', () => {
 
   const e = s.flush();
   assert.ok(e.some((ev) => ev.t === 'pageview'), 'pageview tracked');
+});
+
+// data-tag / <meta name="gm-tag"> label the whole batch as `g` ----------------
+test('tracker: data-tag is sent batch-level as g', () => {
+  const s = makeSandbox({ tag: 'redesign-2026-09', metaTag: 'ignored' });
+  s.load();
+  s.flush();
+  assert.equal(s.beacons[0].body.g, 'redesign-2026-09');
+});
+
+test('tracker: <meta name="gm-tag"> is the fallback when data-tag is absent', () => {
+  const s = makeSandbox({ metaTag: 'v2' });
+  s.load();
+  s.flush();
+  assert.equal(s.beacons[0].body.g, 'v2');
+});
+
+test('tracker: no tag -> payload has no g key', () => {
+  const s = makeSandbox();
+  s.load();
+  s.flush();
+  assert.ok(!('g' in s.beacons[0].body));
 });

@@ -5,6 +5,9 @@
  * No cookies, no third-party requests -- everything posts to same-origin
  * POST /gm/e as one batched JSON payload per flush. localStorage is touched
  * only for the ?gm-ignore self-exclusion flag, never for visitor data.
+ * data-tag="redesign-2026-09" on the script tag (fallback:
+ * <meta name="gm-tag" content="...">) labels every batch as g, so the
+ * dashboard can filter by it and compare it against untagged/older traffic.
  */
 (function(){
 "use strict";
@@ -12,6 +15,8 @@ var D=document,W=window,N=navigator,L=location;
 var SC=D.currentScript;
 var SITE=(SC&&SC.dataset.site)||L.hostname;
 var RD=SC&&SC.dataset.respectDnt;
+var TAG=SC&&SC.dataset.tag;
+try{TAG=TAG||D.querySelector('meta[name="gm-tag"]').content}catch(e){}
 
 /* data-respect-dnt="..." on the script tag: opt in to honoring Do Not Track. */
 if(RD&&RD!=="false"&&(N.doNotTrack==="1"||W.doNotTrack==="1"||N.msDoNotTrack==="1")){
@@ -49,7 +54,8 @@ function add(ev){
 function send(){
   try{
     if(!q.length) return;
-    var body=JSON.stringify({s:SITE,v:1,e:q});
+    /* g:undefined is dropped by JSON.stringify, so untagged pages send no g */
+    var body=JSON.stringify({s:SITE,v:1,e:q,g:TAG||undefined});
     q=[];
     var sent=false;
     if(N.sendBeacon){

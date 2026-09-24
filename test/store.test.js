@@ -108,10 +108,14 @@ test('migration: pre-existing DB without `country` column gets it added via ALTE
   const store = openStore(dbPath);
   const cols = store.db.prepare('PRAGMA table_info(events)').all().map((c) => c.name);
   assert.ok(cols.includes('country'), 'migration added the country column');
+  assert.ok(cols.includes('tag'), 'migration added the tag column');
+  const idx = store.db.prepare('PRAGMA index_list(events)').all().map((i) => i.name);
+  assert.ok(idx.includes('idx_events_site_tag_ts'), 'tag index created after the column exists');
   store.insertEvents([
-    { ts: Date.now(), site_id: SITE, visitor: 'A', session_id: 's1', type: 'pageview', path: '/', country: 'US' },
+    { ts: Date.now(), site_id: SITE, visitor: 'A', session_id: 's1', type: 'pageview', path: '/', country: 'US', tag: 'v2' },
   ]);
   assert.strictEqual(store.db.prepare('SELECT country FROM events').get().country, 'US');
+  assert.strictEqual(store.db.prepare('SELECT tag FROM events').get().tag, 'v2');
   store.close();
 });
 

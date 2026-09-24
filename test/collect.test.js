@@ -180,3 +180,36 @@ test('raw IP and UA are never stored in any table', async () => {
   assert.ok(!dump.includes(SECRET_UA), 'raw UA must not appear at rest');
   mw.stop();
 });
+
+test('batch tag g -> stamped on every row of that batch as `tag`', async () => {
+  const { mw, server } = makeApp();
+  await request(server)
+    .post('/gm/e')
+    .set('User-Agent', UA)
+    .send({ s: 'test', v: 1, g: ' redesign-2026-09 ', e: [{ t: 'pageview', p: '/' }, { t: 'custom', p: '/', n: 'cta' }] })
+    .expect(204);
+  await request(server)
+    .post('/gm/e')
+    .set('User-Agent', UA)
+    .send({ s: 'test', v: 1, e: [{ t: 'pageview', p: '/old' }] })
+    .expect(204);
+  mw.collector.flush();
+  const rows = mw.store.db.prepare('SELECT path, tag FROM events ORDER BY id').all();
+  assert.deepStrictEqual(rows.map((r) => r.tag), ['redesign-2026-09', 'redesign-2026-09', null]);
+  mw.stop();
+});
+
+test('invalid batch tags -> tag is null', async () => {
+  for (const g of ['a'.repeat(65), 'has space', 'semi;colon', '', '   ', 42, { x: 1 }, 'none']) {
+    const { mw, server } = makeApp();
+    await request(server)
+      .post('/gm/e')
+      .set('User-Agent', UA)
+      .send({ s: 'test', v: 1, g, e: [{ t: 'pageview', p: '/' }] })
+      .expect(204);
+    mw.collector.flush();
+    const row = mw.store.db.prepare('SELECT tag FROM events').get();
+    assert.strictEqual(row.tag, null, `g=${JSON.stringify(g)} should give null`);
+    mw.stop();
+  }
+});

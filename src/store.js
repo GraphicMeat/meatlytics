@@ -9,7 +9,7 @@ const EVENT_COLS = [
   'ts', 'site_id', 'visitor', 'session_id', 'type', 'path', 'name', 'props_json',
   'ref_domain', 'ref_class', 'utm_source', 'utm_medium', 'utm_campaign',
   'x_pct', 'y_pct', 'viewport_w', 'doc_h', 'value_int', 'country',
-  'browser', 'os', 'device', 'lang',
+  'browser', 'os', 'device', 'lang', 'tag',
 ];
 
 const SCHEMA = `
@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS events(
   browser TEXT,
   os TEXT,
   device TEXT,
-  lang TEXT
+  lang TEXT,
+  tag TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_site_ts ON events(site_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -119,9 +120,11 @@ class Store {
     // migration: pre-existing DBs created before these columns existed need them added
     // (CREATE TABLE IF NOT EXISTS above is a no-op once the table already exists).
     const have = new Set(this.db.prepare("PRAGMA table_info(events)").all().map((c) => c.name));
-    for (const col of ['country', 'browser', 'os', 'device', 'lang']) {
+    for (const col of ['country', 'browser', 'os', 'device', 'lang', 'tag']) {
       if (!have.has(col)) this.db.exec(`ALTER TABLE events ADD COLUMN ${col} TEXT`);
     }
+    // After the migration, not in SCHEMA: on an old DB the tag column only exists from here.
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_site_tag_ts ON events(site_id, tag, ts)');
 
     this._insert = this.db.prepare(
       `INSERT INTO events (${EVENT_COLS.join(',')}) VALUES (${EVENT_COLS.map((c) => '@' + c).join(',')})`
