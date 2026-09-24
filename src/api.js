@@ -40,7 +40,13 @@ function handle(req, res, url, ctx) {
   if (!p.startsWith('/gm/api/')) return false;
   const sp = url.searchParams;
   const db = ctx.store.db;
-  const base = { siteId: ctx.siteId, from: sp.get('from') || undefined, to: sp.get('to') || undefined };
+  // tag: '' / absent = all traffic, 'none' = untagged only, else exact match (see queries.tagWhere).
+  const base = {
+    siteId: ctx.siteId,
+    from: sp.get('from') || undefined,
+    to: sp.get('to') || undefined,
+    tag: sp.get('tag') || undefined,
+  };
   const exclude = excludePaths(ctx.store);
 
   switch (p) {
@@ -73,6 +79,13 @@ function handle(req, res, url, ctx) {
       return json(res, Q.countries(db, { ...base, exclude })), true;
     case '/gm/api/platforms':
       return json(res, Q.platforms(db, base)), true;
+    case '/gm/api/tags':
+      return json(res, Q.tags(db, base)), true;
+    case '/gm/api/compare': {
+      // Segments carry their own tag; ?tag= is ignored here, ?from/&to bound tag segments.
+      const r = Q.compare(db, { ...base, a: sp.get('a'), b: sp.get('b'), by: sp.get('by') || undefined });
+      return json(res, r, r.error ? 400 : 200), true;
+    }
     case '/gm/api/hub/overview':
       hub.overview({ store: ctx.store, siteId: ctx.siteId, peers: ctx.peers }, sp.toString()).then((data) => json(res, data));
       return true;

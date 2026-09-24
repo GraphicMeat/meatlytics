@@ -5,6 +5,7 @@
 // later concern.
 // ponytail: raw-events only; ceiling is the 90-day retention. Union daily_* if
 // the dashboard ever needs longer ranges.
+const { cleanTag } = require('./collect');
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -18,10 +19,19 @@ function range(opts) {
 }
 
 const DAY = "date(ts/1000,'unixepoch')";
-// Reused range predicate: site + type='pageview' + day between from/to.
-function pvWhere(alias) {
-  const t = alias ? alias + '.' : '';
-  return `${t}site_id=@siteId AND ${t}type='pageview' AND date(${t}ts/1000,'unixepoch') BETWEEN @from AND @to`;
+
+// Optional tag filter shared by every range read. Missing/'' -> no filter (all
+// traffic), 'none' -> untagged rows only, anything else -> exact match on @tag.
+// Built per case rather than one OR'd predicate so a real filter can use
+// idx_events_site_tag_ts, and @tag is only referenced when it is bound.
+function tagWhere(tag) {
+  if (!tag) return '1=1';
+  return tag === 'none' ? 'tag IS NULL' : 'tag=@tag';
+}
+
+// Reused range predicate: site + type='pageview' + day between from/to (+ tag).
+function pvWhere(tag) {
+  return `site_id=@siteId AND type='pageview' AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${tagWhere(tag)}`;
 }
 
 // viewport_w -> bucket predicate
@@ -57,11 +67,12 @@ function normalizeExcludes(list) {
 
 function overview(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to, ex: '[]' };
-  const o = overviewStats(db, p, '1=1');
+  const p = { siteId: opts.siteId, from, to, ex: '[]', tag: opts.tag };
+  const tw = tagWhere(opts.tag);
+  const o = overviewStats(db, p, tw);
   const exclude = opts.exclude || [];
   if (exclude.length) {
-    o.filtered = overviewStats(db, { ...p, ex: JSON.stringify(exclude) }, NOT_EXCLUDED);
+    o.filtered = overviewStats(db, { ...p, ex: JSON.stringify(exclude) }, `${NOT_EXCLUDED} AND ${tw}`);
     o.excluded = exclude;
   }
   return o;
@@ -104,6 +115,7 @@ function overviewStats(db, p, extra) {
     visitors: tot.visitors,
     pageviews: tot.pageviews,
     avgDuration: tot.pageviews ? Math.round(dur.d / tot.pageviews) : 0,
+    sessions: sess,
     bounceRate: sess ? bounces / sess : 0,
     timeseries,
   };
@@ -111,17 +123,18 @@ function overviewStats(db, p, extra) {
 
 function pages(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to };
+  const p = { siteId: opts.siteId, from, to, tag: opts.tag };
   const rows = db
     .prepare(
       `SELECT path, COUNT(DISTINCT visitor) visitors, COUNT(*) pageviews
-       FROM events WHERE ${pvWhere()} GROUP BY path ORDER BY pageviews DESC LIMIT 100`
+       FROM events WHERE ${pvWhere(opts.tag)} GROUP BY path ORDER BY pageviews DESC LIMIT 100`
     )
     .all(p);
   const durs = db
     .prepare(
       `SELECT path, COALESCE(SUM(value_int),0) d, COUNT(*) n FROM events
        WHERE site_id=@siteId AND type='duration' AND date(ts/1000,'unixepoch') BETWEEN @from AND @to
+         AND ${tagWhere(opts.tag)}
        GROUP BY path`
     )
     .all(p);
@@ -132,24 +145,24 @@ function pages(db, opts) {
 
 function sources(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to };
+  const p = { siteId: opts.siteId, from, to, tag: opts.tag };
   const classes = db
     .prepare(
       `SELECT COALESCE(ref_class,'direct') ref_class, COUNT(DISTINCT visitor) visitors
-       FROM events WHERE ${pvWhere()} GROUP BY COALESCE(ref_class,'direct') ORDER BY visitors DESC`
+       FROM events WHERE ${pvWhere(opts.tag)} GROUP BY COALESCE(ref_class,'direct') ORDER BY visitors DESC`
     )
     .all(p);
   const domains = db
     .prepare(
       `SELECT ref_domain, COUNT(DISTINCT visitor) visitors
-       FROM events WHERE ${pvWhere()} AND ref_domain IS NOT NULL AND ref_domain<>''
+       FROM events WHERE ${pvWhere(opts.tag)} AND ref_domain IS NOT NULL AND ref_domain<>''
        GROUP BY ref_domain ORDER BY visitors DESC LIMIT 50`
     )
     .all(p);
   const campaigns = db
     .prepare(
       `SELECT utm_campaign, utm_source, COUNT(DISTINCT visitor) visitors
-       FROM events WHERE ${pvWhere()} AND utm_campaign IS NOT NULL AND utm_campaign<>''
+       FROM events WHERE ${pvWhere(opts.tag)} AND utm_campaign IS NOT NULL AND utm_campaign<>''
        GROUP BY utm_campaign, utm_source ORDER BY visitors DESC LIMIT 50`
     )
     .all(p);
@@ -162,9 +175,9 @@ function flows(db, opts) {
   const { from, to } = range(opts);
   const rows = db
     .prepare(
-      `SELECT session_id, path FROM events WHERE ${pvWhere()} ORDER BY session_id, ts, id`
+      `SELECT session_id, path FROM events WHERE ${pvWhere(opts.tag)} ORDER BY session_id, ts, id`
     )
-    .all({ siteId: opts.siteId, from, to });
+    .all({ siteId: opts.siteId, from, to, tag: opts.tag });
 
   const chains = {};
   let curSid = null;
@@ -200,10 +213,10 @@ function funnel(db, opts) {
     .prepare(
       `SELECT session_id, type, path, name FROM events
        WHERE site_id=@siteId AND type IN ('pageview','custom')
-         AND date(ts/1000,'unixepoch') BETWEEN @from AND @to
+         AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${tagWhere(opts.tag)}
        ORDER BY session_id, ts, id`
     )
-    .all({ siteId: opts.siteId, from, to });
+    .all({ siteId: opts.siteId, from, to, tag: opts.tag });
 
   const reached = new Array(steps.length).fill(0);
   const match = (step, ev) =>
@@ -256,8 +269,8 @@ const VDAY = (type) =>
 function conversions(db, opts) {
   const { from, to } = range(opts);
   const exclude = opts.exclude || [];
-  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(exclude) };
-  const extra = exclude.length ? NOT_EXCLUDED : '1=1';
+  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(exclude), tag: opts.tag };
+  const extra = `${exclude.length ? NOT_EXCLUDED : '1=1'} AND ${tagWhere(opts.tag)}`;
   const where = `site_id=@siteId AND type IN ('pageview','download')
       AND ${DAY} BETWEEN @from AND @to AND ${extra}`;
 
@@ -359,40 +372,108 @@ function realtime(db, opts) {
 
 function countries(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(opts.exclude || []) };
+  const p = { siteId: opts.siteId, from, to, ex: JSON.stringify(opts.exclude || []), tag: opts.tag };
   return db
     .prepare(
       `SELECT COALESCE(country,'') country, COUNT(DISTINCT visitor) visitors,
          COUNT(DISTINCT CASE WHEN ${NOT_EXCLUDED} THEN visitor END) visitorsFiltered
-       FROM events WHERE ${pvWhere()} GROUP BY COALESCE(country,'') ORDER BY visitors DESC`
+       FROM events WHERE ${pvWhere(opts.tag)} GROUP BY COALESCE(country,'') ORDER BY visitors DESC`
     )
     .all(p);
 }
 
 function platforms(db, opts) {
   const { from, to } = range(opts);
-  const p = { siteId: opts.siteId, from, to };
+  const p = { siteId: opts.siteId, from, to, tag: opts.tag };
   const dim = (col) =>
     db
       .prepare(
         `SELECT ${col} name, COUNT(DISTINCT visitor) visitors
-         FROM events WHERE ${pvWhere()} AND ${col} IS NOT NULL AND ${col}<>''
+         FROM events WHERE ${pvWhere(opts.tag)} AND ${col} IS NOT NULL AND ${col}<>''
          GROUP BY ${col} ORDER BY visitors DESC LIMIT 20`
       )
       .all(p);
   return { browsers: dim('browser'), os: dim('os'), devices: dim('device'), langs: dim('lang') };
 }
 
+// by: prop key (caller-validated) -> names split into 'name:value'. Events
+// without that prop keep the bare name, as do props stored truncated (invalid
+// JSON; json_extract would throw on them).
 function eventsList(db, opts) {
   const { from, to } = range(opts);
+  const nm = opts.by
+    ? `COALESCE(name||':'||CASE WHEN json_valid(props_json) THEN json_extract(props_json,'$."'||@by||'"') END, name)`
+    : 'name';
   return db
     .prepare(
-      `SELECT name, COUNT(*) count, COUNT(DISTINCT visitor) uniques FROM events
+      `SELECT ${nm} name, COUNT(*) count, COUNT(DISTINCT visitor) uniques FROM events
        WHERE site_id=@siteId AND type='custom' AND name IS NOT NULL
-         AND date(ts/1000,'unixepoch') BETWEEN @from AND @to
-       GROUP BY name ORDER BY count DESC LIMIT 100`
+         AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${tagWhere(opts.tag)}
+       GROUP BY 1 ORDER BY count DESC LIMIT 100`
     )
-    .all({ siteId: opts.siteId, from, to });
+    .all({ siteId: opts.siteId, from, to, tag: opts.tag, by: opts.by });
 }
 
-module.exports = { overview, pages, sources, flows, funnel, conversions, heatmap, realtime, eventsList, countries, platforms, range, vwClause, normalizeExcludes };
+// Every tag in the retained raw events (all time, i.e. the 90-day window),
+// newest first, plus a tag:null entry for untagged traffic -- always present
+// so the dashboard can offer "Untagged" even before any tag exists.
+function tags(db, opts) {
+  const rows = db
+    .prepare(
+      `SELECT tag, COUNT(DISTINCT CASE WHEN type='pageview' THEN visitor END) visitors,
+         COUNT(CASE WHEN type='pageview' THEN 1 END) pageviews, MIN(${DAY}) first, MAX(${DAY}) last
+       FROM events WHERE site_id=? GROUP BY tag ORDER BY first DESC, tag IS NULL, tag`
+    )
+    .all(opts.siteId);
+  if (!rows.some((r) => r.tag === null)) rows.push({ tag: null, visitors: 0, pageviews: 0, first: null, last: null });
+  return rows;
+}
+
+// Segment string -> { from, to, tag? }, or null if malformed.
+//   tag:<name>  rows with that tag, within the request's from/to when given, else all retained data
+//   untagged    rows with no tag, same range rule
+//   date:A..B   every row on UTC days A..B inclusive, whatever its tag
+function parseSegment(seg, opts) {
+  if (typeof seg !== 'string') return null;
+  const all = { from: opts.from || '0000-01-01', to: opts.to || '9999-12-31' };
+  if (seg === 'untagged') return { ...all, tag: 'none' };
+  if (seg.startsWith('tag:')) {
+    const tag = cleanTag(seg.slice(4));
+    return tag && tag === seg.slice(4) ? { ...all, tag } : null;
+  }
+  const m = /^date:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/.exec(seg);
+  return m && m[1] <= m[2] ? { from: m[1], to: m[2] } : null;
+}
+
+// Before/after report, e.g. old site (untagged) vs a redesign's tag. Per
+// segment: overview stats + custom events with rate = uniques / visitors (both
+// visitor-days, like conversions). rows merges the two by event name, delta =
+// b.rate - a.rate, biggest combined uniques first. Bad input -> { error }.
+function compare(db, opts) {
+  if (opts.by !== undefined && !/^[A-Za-z0-9_]{1,32}$/.test(opts.by)) {
+    return { error: 'by must be a prop key: [A-Za-z0-9_]{1,32}' };
+  }
+  const out = {};
+  for (const k of ['a', 'b']) {
+    const seg = parseSegment(opts[k], opts);
+    if (!seg) return { error: `bad segment ${k}: want tag:<name>, untagged or date:YYYY-MM-DD..YYYY-MM-DD` };
+    const p = { siteId: opts.siteId, ...seg };
+    const s = overviewStats(db, p, tagWhere(seg.tag));
+    s.events = eventsList(db, { ...p, by: opts.by }).map((e) => ({ ...e, rate: s.visitors ? e.uniques / s.visitors : 0 }));
+    out[k] = { segment: opts[k], ...s };
+  }
+  const zero = { count: 0, uniques: 0, rate: 0 };
+  const byName = {};
+  for (const k of ['a', 'b']) {
+    for (const e of out[k].events) {
+      const r = byName[e.name] || (byName[e.name] = { name: e.name, a: zero, b: zero });
+      r[k] = { count: e.count, uniques: e.uniques, rate: e.rate };
+    }
+  }
+  out.rows = Object.values(byName)
+    .map((r) => ({ ...r, delta: r.b.rate - r.a.rate }))
+    .sort((x, y) => y.a.uniques + y.b.uniques - (x.a.uniques + x.b.uniques) || (x.name < y.name ? -1 : 1));
+  return out;
+}
+
+module.exports = { overview, pages, sources, flows, funnel, conversions, heatmap, realtime, eventsList, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };

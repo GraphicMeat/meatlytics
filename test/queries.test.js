@@ -323,3 +323,157 @@ test('conversions: excluded paths drop out of both numerator and denominator', (
   assert.ok(!c.paths.some((r) => r.path === '/pricing'));
   store.close();
 });
+
+// --- tags + compare ----------------------------------------------------------
+// Redesign fixture: the old site never set a tag (TD1), the new one ships
+// data-tag="v2" (TD2). X1 carries an unrelated tag on TD1.
+const TD1 = '2026-08-01';
+const TD2 = '2026-09-10';
+const ALL = { siteId: SITE, from: TD1, to: TD2 };
+function seedTags(store) {
+  const ev = (d, hm, visitor, type, extra) => ({ ts: at(d, hm), site_id: SITE, visitor, session_id: 's' + visitor, type, path: '/', ...extra });
+  store.insertEvents([
+    // old site, untagged
+    ev(TD1, '10:00', 'O1', 'pageview'),
+    ev(TD1, '10:01', 'O1', 'pageview', { path: '/pricing' }),
+    ev(TD1, '10:02', 'O1', 'custom', { name: 'home_cta', props_json: '{"slot":"demo"}' }),
+    ev(TD1, '11:00', 'O2', 'pageview'),
+    ev(TD1, '12:00', 'X1', 'pageview', { tag: 'other' }),
+    // new site, tag v2
+    ev(TD2, '10:00', 'N1', 'pageview', { tag: 'v2' }),
+    ev(TD2, '10:01', 'N1', 'custom', { tag: 'v2', name: 'home_cta', props_json: '{"slot":"demo"}' }),
+    ev(TD2, '10:02', 'N1', 'custom', { tag: 'v2', name: 'home_cta', props_json: '{"slot":"download"}' }),
+    ev(TD2, '11:00', 'N2', 'pageview', { tag: 'v2' }),
+    ev(TD2, '11:01', 'N2', 'pageview', { tag: 'v2', path: '/pricing' }),
+    ev(TD2, '11:02', 'N2', 'custom', { tag: 'v2', name: 'home_cta', props_json: '{"slot":"download"}' }),
+    ev(TD2, '12:00', 'N3', 'pageview', { tag: 'v2' }),
+    // props_json is stored .slice(0,2048)'d, so it can be invalid JSON
+    ev(TD2, '12:01', 'N3', 'custom', { tag: 'v2', name: 'home_cta', props_json: '{"slot":"dem' }),
+    ev(TD2, '12:02', 'N3', 'custom', { tag: 'v2', name: 'signup' }),
+  ]);
+}
+
+test('tag filter: all / none / exact on overview', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const all = Q.overview(store.db, ALL);
+  assert.strictEqual(all.visitors, 6);
+  assert.strictEqual(all.pageviews, 8);
+  assert.strictEqual(Q.overview(store.db, { ...ALL, tag: '' }).visitors, 6, "'' means no filter");
+  const none = Q.overview(store.db, { ...ALL, tag: 'none' });
+  assert.strictEqual(none.visitors, 2);
+  assert.strictEqual(none.pageviews, 3);
+  assert.strictEqual(none.bounceRate, 1 / 2);
+  const v2 = Q.overview(store.db, { ...ALL, tag: 'v2' });
+  assert.strictEqual(v2.visitors, 3);
+  assert.strictEqual(v2.pageviews, 4);
+  assert.strictEqual(v2.bounceRate, 2 / 3);
+  assert.strictEqual(Q.overview(store.db, { ...ALL, tag: 'nope' }).visitors, 0);
+  store.close();
+});
+
+test('tag filter: all / none / exact on eventsList', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const find = (rows, n) => rows.find((r) => r.name === n);
+  assert.deepStrictEqual(find(Q.eventsList(store.db, ALL), 'home_cta'), { name: 'home_cta', count: 5, uniques: 4 });
+  assert.deepStrictEqual(Q.eventsList(store.db, { ...ALL, tag: 'none' }), [{ name: 'home_cta', count: 1, uniques: 1 }]);
+  const v2 = Q.eventsList(store.db, { ...ALL, tag: 'v2' });
+  assert.deepStrictEqual(find(v2, 'home_cta'), { name: 'home_cta', count: 4, uniques: 3 });
+  assert.deepStrictEqual(find(v2, 'signup'), { name: 'signup', count: 1, uniques: 1 });
+  // the other range reads take the same filter
+  assert.strictEqual(Q.pages(store.db, { ...ALL, tag: 'other' })[0].visitors, 1);
+  assert.strictEqual(Q.flows(store.db, { ...ALL, tag: 'none' }).length, 2);
+  store.close();
+});
+
+test('tags: all-time list, newest first, untagged entry always present', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const t = Q.tags(store.db, { siteId: SITE });
+  assert.deepStrictEqual(t[0], { tag: 'v2', visitors: 3, pageviews: 4, first: TD2, last: TD2 });
+  assert.deepStrictEqual(t.find((r) => r.tag === null), { tag: null, visitors: 2, pageviews: 3, first: TD1, last: TD1 });
+  assert.ok(t.some((r) => r.tag === 'other'));
+  store.close();
+
+  const empty = openStore(tmpDbPath());
+  empty.insertEvents([{ ts: at(TD2), site_id: SITE, visitor: 'A', session_id: 's', type: 'pageview', path: '/', tag: 'v2' }]);
+  assert.deepStrictEqual(Q.tags(empty.db, { siteId: SITE }).find((r) => r.tag === null),
+    { tag: null, visitors: 0, pageviews: 0, first: null, last: null });
+  empty.close();
+});
+
+test('compare: untagged vs tag segment, per-segment rates and merged rows', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compare(store.db, { siteId: SITE, a: 'untagged', b: 'tag:v2' });
+  assert.strictEqual(c.a.segment, 'untagged');
+  assert.strictEqual(c.a.visitors, 2);
+  assert.strictEqual(c.a.pageviews, 3);
+  assert.strictEqual(c.a.sessions, 2);
+  assert.strictEqual(c.a.bounceRate, 1 / 2);
+  assert.deepStrictEqual(c.a.events, [{ name: 'home_cta', count: 1, uniques: 1, rate: 1 / 2 }]);
+  assert.strictEqual(c.b.visitors, 3);
+  assert.strictEqual(c.b.sessions, 3);
+  assert.deepStrictEqual(c.rows.map((r) => r.name), ['home_cta', 'signup']);
+  assert.deepStrictEqual(c.rows[0], {
+    name: 'home_cta',
+    a: { count: 1, uniques: 1, rate: 1 / 2 },
+    b: { count: 4, uniques: 3, rate: 1 },
+    delta: 1 / 2,
+  });
+  assert.deepStrictEqual(c.rows[1].a, { count: 0, uniques: 0, rate: 0 });
+  assert.strictEqual(c.rows[1].delta, 1 / 3);
+  store.close();
+});
+
+test('compare: tag segment honours from/to; empty segment rates are 0, never NaN', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compare(store.db, { siteId: SITE, from: TD1, to: TD1, a: 'untagged', b: 'tag:v2' });
+  assert.strictEqual(c.a.visitors, 2);
+  assert.strictEqual(c.b.visitors, 0);
+  assert.strictEqual(c.rows[0].b.rate, 0);
+  store.close();
+});
+
+test('compare: date segments ignore tags', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compare(store.db, { siteId: SITE, a: `date:${TD1}..${TD1}`, b: `date:${TD2}..${TD2}` });
+  assert.strictEqual(c.a.segment, `date:${TD1}..${TD1}`);
+  assert.strictEqual(c.a.visitors, 3); // O1, O2 and the 'other'-tagged X1
+  assert.strictEqual(c.b.visitors, 3);
+  store.close();
+});
+
+test('compare: by=<prop> splits event names by prop value; missing/invalid props keep the bare name', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compare(store.db, { siteId: SITE, a: 'untagged', b: 'tag:v2', by: 'slot' });
+  assert.deepStrictEqual(c.rows.map((r) => r.name), ['home_cta:demo', 'home_cta:download', 'home_cta', 'signup']);
+  const dl = c.rows[1];
+  assert.deepStrictEqual(dl.b, { count: 2, uniques: 2, rate: 2 / 3 });
+  assert.deepStrictEqual(dl.a, { count: 0, uniques: 0, rate: 0 });
+  store.close();
+});
+
+test('compare: malformed segments or by -> {error}', () => {
+  const store = openStore(tmpDbPath());
+  const bad = [
+    { b: 'untagged' },
+    { a: 'untagged' },
+    { a: 'foo:bar', b: 'untagged' },
+    { a: 'tag:', b: 'untagged' },
+    { a: 'tag:has space', b: 'untagged' },
+    { a: 'date:2026-09-01', b: 'untagged' },
+    { a: 'date:2026-09-10..2026-09-01', b: 'untagged' },
+    { a: 'untagged', b: 'tag:v2', by: 'a.b' },
+    { a: 'untagged', b: 'tag:v2', by: 'x'.repeat(33) },
+  ];
+  for (const o of bad) {
+    const r = Q.compare(store.db, { siteId: SITE, ...o });
+    assert.ok(r.error, JSON.stringify(o) + ' should be rejected');
+  }
+  store.close();
+});

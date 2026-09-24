@@ -194,3 +194,50 @@ test('excluded paths: session-only settings route persists list, API applies it'
   assert.deepStrictEqual(c.body, [{ country: 'LT', visitors: 2, visitorsFiltered: 1 }]);
   mw.stop();
 });
+
+test('tags + compare: need dashboard auth like every /gm/api/* route; heat token does not open them', async () => {
+  const { mw, server } = makeApp();
+  const t = mw.auth.makeHeatToken();
+  for (const p of ['/gm/api/tags', '/gm/api/compare?a=untagged&b=tag:v2']) {
+    await request(server).get(p).expect(401);
+    await request(server).get(p + (p.includes('?') ? '&' : '?') + 't=' + t).expect(401);
+  }
+  mw.stop();
+});
+
+test('tags + compare + ?tag= filter over HTTP', async () => {
+  const { mw, server } = makeApp();
+  const today = new Date().toISOString().slice(0, 10);
+  const ev = (visitor, type, extra) => ({ ts: Date.now(), site_id: 'test', visitor, session_id: 's' + visitor, type, path: '/', ...extra });
+  mw.store.insertEvents([
+    ev('A', 'pageview'),
+    ev('B', 'pageview', { tag: 'redesign-2026-09' }),
+    ev('B', 'custom', { tag: 'redesign-2026-09', name: 'home_cta', props_json: '{"cta":"demo"}' }),
+  ]);
+  const auth = { Authorization: 'Bearer ' + KEY };
+
+  const tags = await request(server).get('/gm/api/tags').set(auth).expect(200).expect('Content-Type', /json/);
+  assert.deepStrictEqual(tags.body.map((r) => r.tag), ['redesign-2026-09', null]);
+
+  const q = `from=${today}&to=${today}`;
+  const all = await request(server).get(`/gm/api/overview?${q}`).set(auth).expect(200);
+  const none = await request(server).get(`/gm/api/overview?${q}&tag=none`).set(auth).expect(200);
+  const one = await request(server).get(`/gm/api/events?${q}&tag=redesign-2026-09`).set(auth).expect(200);
+  assert.strictEqual(all.body.visitors, 2);
+  assert.strictEqual(none.body.visitors, 1);
+  assert.deepStrictEqual(one.body, [{ name: 'home_cta', count: 1, uniques: 1 }]);
+
+  const c = await request(server)
+    .get('/gm/api/compare?a=untagged&b=tag:redesign-2026-09&by=cta')
+    .set(auth)
+    .expect(200);
+  assert.strictEqual(c.body.a.segment, 'untagged');
+  assert.strictEqual(c.body.b.visitors, 1);
+  assert.deepStrictEqual(c.body.rows, [
+    { name: 'home_cta:demo', a: { count: 0, uniques: 0, rate: 0 }, b: { count: 1, uniques: 1, rate: 1 }, delta: 1 },
+  ]);
+
+  const bad = await request(server).get('/gm/api/compare?a=untagged&b=nope').set(auth).expect(400).expect('Content-Type', /json/);
+  assert.ok(bad.body.error);
+  mw.stop();
+});

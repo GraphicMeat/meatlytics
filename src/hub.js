@@ -30,7 +30,12 @@ async function overview(ctx, qs) {
   const local = {
     name: ctx.siteId,
     ok: true,
-    data: Q.overview(ctx.store.db, { siteId: ctx.siteId, from: sp.get('from') || undefined, to: sp.get('to') || undefined }),
+    data: Q.overview(ctx.store.db, {
+      siteId: ctx.siteId,
+      from: sp.get('from') || undefined,
+      to: sp.get('to') || undefined,
+      tag: sp.get('tag') || undefined,
+    }),
   };
   const peers = ctx.peers || [];
   const results = await Promise.all(peers.map((p) => fetchPeer(p, qs)));
