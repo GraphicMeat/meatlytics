@@ -8,6 +8,7 @@ const { createAuth } = require('./auth');
 const webauthn = require('./webauthn');
 const api = require('./api');
 const { normalizeExcludes } = require('./queries');
+const { createGithub } = require('./github');
 
 const PLACEHOLDER_JS = '/* meatlytics: tracker not built yet (run `npm run build`) */\n';
 const DASH_MISSING = '<!doctype html><p>meatlytics: dashboard not built yet (run <code>npm run build</code>)</p>';
@@ -102,6 +103,7 @@ module.exports = function analytics(opts) {
   if (opts.previewPath && !/^\/[A-Za-z0-9/._~-]*$/.test(opts.previewPath)) {
     throw new Error('meatlytics: opts.previewPath must start with "/" and contain only URL path characters');
   }
+  const github = createGithub(opts); // throws on a bad opts.github before the DB is touched
   const store = openStore(opts.dbPath);
   const collector = createCollector(store, opts);
   const auth = createAuth(store, opts);
@@ -389,7 +391,7 @@ module.exports = function analytics(opts) {
         res.setHeader('Content-Type', 'application/json');
         return res.end('{"error":"unauthorized"}');
       }
-      return api.handle(req, res, url, { store, siteId: opts.siteId, auth, peers: opts.peers });
+      return api.handle(req, res, url, { store, siteId: opts.siteId, auth, peers: opts.peers, github });
     }
 
     if (next) return next();
@@ -402,6 +404,7 @@ module.exports = function analytics(opts) {
   // Server-side conversion hook: analytics.track(req, { name: 'meatpad' })
   mw.track = (req, ev) => collector.track(req, ev);
   mw.auth = auth;
+  mw.github = github;
   mw.stop = () => {
     collector.stop();
     clearInterval(nightly);

@@ -622,9 +622,36 @@ function renderDownloads(){
       '<div class="grid2">'+
         '<div class="panel"><h3>By page</h3>'+convPaths(d.paths)+'</div>'+
         '<div class="panel"><h3>By file</h3>'+convFiles(d.files)+'</div>'+
-      '</div>';
+      '</div>'+
+      '<div id="rel"></div>';
     drawRate(d.timeseries);
+    renderReleases();
   }).catch(function(){ el.innerHTML='<p class="mut">No data</p>'; });
+}
+// New users vs updates per GitHub release; empty unless the server sets opts.github.
+// New = website clicks capped at GitHub's count, the rest = updaters + direct GitHub links.
+function renderReleases(){
+  api('releases').then(function(d){
+    var el=$('#rel'); if(!el||!d.configured) return;
+    el.innerHTML=d.apps.map(function(a){
+      var t=a.totals;
+      return '<div class="panel"><h3>'+esc(a.repo)+' — new users vs updates</h3>'+
+        (a.error||!t?'<p class="mut">GitHub unavailable</p>':
+          '<div class="cards">'+card('GitHub downloads',t.gh)+card('New users',t.newUsers)+card('Updates + direct',t.updates)+card('All-time GitHub',t.allTime)+'</div>'+
+          relTable(a.releases)+
+          '<p class="mut" style="margin:8px 0 0">New = website clicks, capped at GitHub\'s count. Updates + direct = installer downloads the site did not send: in-app updaters and links straight to GitHub. Each release is measured from its publish time until the next. The first three cards cover '+t.releases+' of '+a.releases.length+' releases with website data (the rest show —); all-time GitHub counts every release.</p>')+
+        '</div>';
+    }).join('');
+  }).catch(function(){});
+}
+function relTable(rows){
+  if(!rows.length) return '<p class="mut">No releases</p>';
+  function n(v){ return v==null?'—':v; }
+  return '<table><tr><th>Release</th><th>Published</th><th class="n">GitHub</th><th class="n">New</th><th class="n">Updates + direct</th></tr>'+
+    rows.slice(0,12).map(function(r){
+      return '<tr><td>'+(r.url?'<a href="'+esc(r.url)+'" target="_blank" rel="noopener">'+esc(r.tag)+'</a>':esc(r.tag))+'</td>'+
+        '<td>'+esc(r.published.slice(0,10))+'</td><td class="n">'+r.gh+'</td><td class="n">'+n(r.newUsers)+'</td><td class="n">'+n(r.updates)+'</td></tr>';
+    }).join('')+'</table>';
 }
 function convPaths(rows){
   rows=(rows||[]).filter(function(r){return r.base||r.converted});

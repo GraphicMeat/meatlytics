@@ -75,6 +75,10 @@ function handle(req, res, url, ctx) {
       return json(res, Q.eventsList(db, base)), true;
     case '/gm/api/conversions':
       return json(res, Q.conversions(db, { ...base, exclude })), true;
+    case '/gm/api/releases':
+      // Range and tag don't apply: each release is measured over its own latest-release window.
+      ctx.github.report(db, { siteId: ctx.siteId, exclude }).then((data) => json(res, data));
+      return true;
     case '/gm/api/countries':
       return json(res, Q.countries(db, { ...base, exclude })), true;
     case '/gm/api/platforms':

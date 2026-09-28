@@ -4,12 +4,14 @@ Self-hosted website analytics that weighs nothing and shares nothing.
 
 One npm package, mounted as middleware on the Node server you already run.
 Tracker, collector, storage, and dashboard all ship inside it. Every byte of
-analytics data stays on your server — no third-party requests, ever, from the
-client or the backend. That's a build gate, not a promise.
+analytics data stays on your server — no third-party requests from the client,
+and none from the backend unless you opt in to GitHub release counts (below),
+which only reads public numbers and sends nothing. The client half is a build
+gate, not a promise.
 
 ```
 tracker         1.8 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
-dashboard      12.8 KB gzipped   single self-contained HTML file, no framework
+dashboard      13.3 KB gzipped   single self-contained HTML file, no framework
 dependencies    1                (better-sqlite3)
 collect
 throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
@@ -24,6 +26,7 @@ Add one script tag. No configuration, no event wiring:
 - **Funnels** — built ad-hoc in the dashboard from pages or custom events, computed retroactively — no pre-registration
 - **Click + mouse heatmaps** — rendered as an overlay on your live page, per viewport class (mobile/tablet/desktop)
 - **Outbound links, file downloads, form submits** (form id only — never field values)
+- **New users vs updates** — opt-in: GitHub release download counts against website download clicks, per release, in the Downloads tab
 - **Download conversions** — daily success rate (visitors who asked for a file ÷ visitors who saw the page), per page and per file, in the Downloads tab
 - **Scroll depth, time on page** (visible time, not wall-clock)
 - **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
@@ -65,6 +68,50 @@ conversion to the same-origin `Referer` page — the page the visitor clicked
 from, not the redirect route — so the Downloads tab reads as a per-page
 conversion rate. A "download" means the visitor asked for the file; whether the
 bytes landed isn't observable when the asset is hosted elsewhere.
+
+### New users vs updates (GitHub releases)
+
+GitHub counts every fetch of a release installer, whether it came from your
+website, an in-app updater or a link straight to GitHub. Your website counts
+only the visitors it sent. Give meatlytics the repo and it subtracts one from
+the other, release by release:
+
+```js
+analytics({
+  siteId: 'mysite', dbPath: '...',
+  github: 'GraphicMeat/MeatPad',                 // or the releases page URL
+  // several products on one site: one entry each, joined to the event your
+  // /download/:app route records with track()
+  // github: [
+  //   { repo: 'GraphicMeat/MeatPad',   site: 'download:meatpad' },
+  //   { repo: 'GraphicMeat/PhotoBooks', site: 'download:photobooks' },
+  // ],
+});
+```
+
+Each stable release counts as "the latest" from its publish time until the
+next one — the window in which your site sends people to it. Within that
+window: `newUsers = min(site, github)` and `updates = github − newUsers`.
+`updates` is everything the site did not send: in-app updaters and anyone who
+went straight to GitHub. Drafts and prereleases (nightlies) are ignored.
+
+| Entry field | Meaning |
+|---|---|
+| `repo` | `owner/name` or a `github.com` URL |
+| `site` | What counts as "asked for the app": `download` (default — every file-download event), `download:<name>` (e.g. a `track()` call) or `event:<name>` (a custom event). Pick one signal per product; counting two double-counts |
+| `assets` | Regex of release files that count as installs. Default: `.dmg .exe .msi .deb .snap .rpm .AppImage`. Update-check files (`appcast.xml`, `latest.json`, `.sig`) never count |
+
+Both sides are estimates: GitHub counts fetches, the site counts visitor-days.
+Read the split as a trend: a click on an old version's file is counted in the
+window it happened in, while GitHub credits it to that old release. A release shows `null` site numbers (and `—` in the
+dashboard) when its window opened before website tracking began or before the
+90-day raw retention, because the site count would read low and make every
+download look like an update.
+
+This is the one place the backend talks to a third party: it GETs public
+release metadata from `api.github.com`, at most once an hour per repo, and only
+when `github` is set. Nothing about your visitors is sent. `githubFetch` swaps
+in your own `fetch` (proxy, token for a private repo, tests).
 
 ### Tags: compare a redesign against the old site
 
@@ -242,6 +289,8 @@ analytics({
   apiKey,             // optional override. otherwise minted once and persisted in the DB
   peers,              // optional. [{ name, url, apiKey }] — see Hub mode
   respectDNT,         // optional, default false. if true, tracker no-ops when the browser signals Do Not Track
+  github,             // optional. GitHub releases to split new users from updates — see above
+  githubFetch,        // optional. fetch implementation for `github` (proxy, auth, tests)
 })
 ```
 
@@ -275,6 +324,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/realtime` | Active visitors, last 5 min | " |
 | `GET /gm/api/events` | Custom event counts | " |
 | `GET /gm/api/conversions` | Download success rate: daily counts, per page, per file | " |
+| `GET /gm/api/releases` | New users vs updates per GitHub release (needs `github`; ignores `from`/`to`/`tag`) | " |
 | `GET /gm/api/countries` | Visitors per country | " |
 | `GET /gm/api/platforms` | Browsers, OS, devices, languages | " |
 | `GET /gm/api/tags` | Tags seen (all retained data) + untagged, with visitors/pageviews/first/last day | " |
@@ -302,8 +352,10 @@ Built to the Plausible/Fathom standard — stricter in places:
   discarded — after 24 hours nobody, including you, can re-derive who was who.
 - **Raw IP and user-agent never touch disk.** Used in memory for the hash and
   rate limiting, then gone. A session = same hash, <30 min gap.
-- **Zero third-party requests**, enforced at build time: `scripts/build.js`
-  fails if an external URL appears in the tracker or dashboard bundle.
+- **Zero third-party requests** from the tracker and dashboard, enforced at
+  build time: `scripts/build.js` fails if an external URL appears in either
+  bundle. The one backend exception is opt-in: `github` GETs public release
+  counts from `api.github.com` — nothing about your visitors is sent.
 - **Retention:** raw events 90 days, then pruned. Daily aggregates kept forever.
 - **Bots** filtered by user-agent at collect time, never stored.
 - **Form tracking records the form's id — never its values.**

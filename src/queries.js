@@ -316,6 +316,28 @@ function conversions(db, opts) {
   };
 }
 
+// Website "asked for the app" signal used to split GitHub release downloads
+// (see github.js): a type ('download' | 'custom') and optionally an exact name.
+const SIGNAL = "type=@type AND (@name IS NULL OR name=@name)";
+
+// First retained signal event (ms), or null. Tracking start or the raw-retention
+// edge, whichever is later: windows opening before it can't be counted.
+function signalSince(db, o) {
+  return db
+    .prepare(`SELECT MIN(ts) t FROM events WHERE site_id=@siteId AND ${SIGNAL}`)
+    .get({ siteId: o.siteId, type: o.type, name: o.name }).t;
+}
+
+// Signal visitor-days in [from, to) ms, minus excluded paths. Same unit as conversions.
+function signalCount(db, o) {
+  return db
+    .prepare(
+      `SELECT COUNT(DISTINCT ${DAY}||visitor) n FROM events
+       WHERE site_id=@siteId AND ${SIGNAL} AND ts>=@from AND ts<@to AND ${NOT_EXCLUDED}`
+    )
+    .get({ siteId: o.siteId, type: o.type, name: o.name, from: o.from, to: o.to, ex: JSON.stringify(o.exclude || []) }).n;
+}
+
 function heatmap(db, opts) {
   const bucket = vwClause(opts.vwBucket);
   if (opts.kind === 'mouse') {
@@ -476,4 +498,4 @@ function compare(db, opts) {
   return out;
 }
 
-module.exports = { overview, pages, sources, flows, funnel, conversions, heatmap, realtime, eventsList, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };
+module.exports = { overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };
