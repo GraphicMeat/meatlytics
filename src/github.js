@@ -17,6 +17,8 @@ const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 // Real installers only: update-check files (appcast.xml, latest.json, .sig)
 // count checks, not installs.
 const INSTALLERS = /\.(dmg|exe|msi|deb|snap|rpm|appimage)$/i;
+// Platform by installer extension; anything else an `assets` override lets through is 'Other'.
+const PLATFORM = { dmg: 'macOS', exe: 'Windows', msi: 'Windows', deb: 'Linux', snap: 'Linux', rpm: 'Linux', appimage: 'Linux' };
 const SITE_RE = /^(download|event)(?::(.+))?$/;
 const TTL = 60 * 60 * 1000;
 
@@ -93,23 +95,42 @@ function createReleases({ fetch = globalThis.fetch, now = Date.now, ttl = TTL } 
   };
 }
 
+function platformOf(name) {
+  const m = /\.([a-z]+)$/i.exec(name);
+  return (m && PLATFORM[m[1].toLowerCase()]) || 'Other';
+}
+
 // releases: newest first. Site counts exist only for windows that start after
 // the first recorded signal event: an earlier start predates tracking or the
 // 90-day raw retention, and would read as "all updates".
 // ponytail: raw events only; persist closed-window counts if history beyond 90 days is wanted.
-function split(db, siteId, exclude, app, releases) {
+function split(db, siteId, exclude, app, releases, now = Date.now()) {
   const q = { siteId, type: app.type, name: app.name, exclude };
   const since = Q.signalSince(db, q);
   // gh/newUsers/updates cover only the `releases` with a site count, so gh = newUsers + updates;
-  // allTime is every stable release, whatever its window.
-  const totals = { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 0 };
+  // allTime and platforms are every stable release, whatever its window.
+  const totals = { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 0, platforms: {} };
   const rows = releases.map((r, i) => {
-    const gh = r.assets.reduce((s, a) => (app.assets.test(a.name) ? s + a.count : s), 0);
+    let gh = 0;
+    const platforms = {};
+    for (const a of r.assets) {
+      if (!a.count || !app.assets.test(a.name)) continue;
+      gh += a.count;
+      const p = platformOf(a.name);
+      platforms[p] = (platforms[p] || 0) + a.count;
+      totals.platforms[p] = (totals.platforms[p] || 0) + a.count;
+    }
     totals.allTime += gh;
-    const row = { tag: r.tag, published: new Date(r.published).toISOString(), url: r.url, gh, site: null, newUsers: null, updates: null };
-    if (since === null || r.published < since) return row;
     // i === 0 is still the latest: its window runs to now.
-    row.site = Q.signalCount(db, { ...q, from: r.published, to: i ? releases[i - 1].published : Number.MAX_SAFE_INTEGER });
+    const end = i ? releases[i - 1].published : now;
+    // perHour = lifetime downloads over the window; under an hour is too noisy to divide.
+    const hours = (end - r.published) / 36e5;
+    const row = {
+      tag: r.tag, published: new Date(r.published).toISOString(), url: r.url, gh,
+      perHour: hours >= 1 ? gh / hours : null, platforms, site: null, newUsers: null, updates: null,
+    };
+    if (since === null || r.published < since) return row;
+    row.site = Q.signalCount(db, { ...q, from: r.published, to: i ? end : Number.MAX_SAFE_INTEGER });
     row.newUsers = Math.min(row.site, gh);
     row.updates = gh - row.newUsers;
     totals.gh += gh;

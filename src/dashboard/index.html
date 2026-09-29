@@ -638,19 +638,31 @@ function renderReleases(){
       return '<div class="panel"><h3>'+esc(a.repo)+' — new users vs updates</h3>'+
         (a.error||!t?'<p class="mut">GitHub unavailable</p>':
           '<div class="cards">'+card('GitHub downloads',t.gh)+card('New users',t.newUsers)+card('Updates + direct',t.updates)+card('All-time GitHub',t.allTime)+'</div>'+
-          relTable(a.releases)+
-          '<p class="mut" style="margin:8px 0 0">New = website clicks, capped at GitHub\'s count. Updates + direct = installer downloads the site did not send: in-app updaters and links straight to GitHub. Each release is measured from its publish time until the next. The first three cards cover '+t.releases+' of '+a.releases.length+' releases with website data (the rest show —); all-time GitHub counts every release.</p>')+
+          (relPlatforms(t).length>1?'<p class="mut" style="margin:0 0 8px">All-time by platform: '+relPlatformLine(t,t.platforms)+'</p>':'')+
+          relTable(a.releases,t)+
+          '<p class="mut" style="margin:8px 0 0">New = website clicks, capped at GitHub\'s count. Updates + direct = installer downloads the site did not send: in-app updaters and links straight to GitHub. Each release is measured from its publish time until the next; per hour = its GitHub downloads over that window (— under an hour). The first three cards cover '+t.releases+' of '+a.releases.length+' releases with website data (the rest show —); all-time GitHub counts every release.</p>')+
         '</div>';
     }).join('');
   }).catch(function(){});
 }
-function relTable(rows){
+// Platforms seen across all releases, biggest first; the split is only worth showing with 2+.
+function relPlatforms(t){
+  var p=t.platforms||{};
+  return Object.keys(p).sort(function(x,y){return p[y]-p[x]});
+}
+function relPlatformLine(t,counts){
+  return relPlatforms(t).map(function(k){ return esc(k)+' '+(counts[k]||0).toLocaleString(); }).join(' · ');
+}
+function relRate(v){ return v==null?'—':v>=10?Math.round(v).toLocaleString():v.toFixed(v>=1?1:2); }
+function relTable(rows,t){
   if(!rows.length) return '<p class="mut">No releases</p>';
   function n(v){ return v==null?'—':v; }
-  return '<table><tr><th>Release</th><th>Published</th><th class="n">GitHub</th><th class="n">New</th><th class="n">Updates + direct</th></tr>'+
+  var multi=relPlatforms(t).length>1;
+  return '<table><tr><th>Release</th><th>Published</th><th class="n">GitHub</th><th class="n">New</th><th class="n">Updates + direct</th><th class="n">Per hour</th>'+(multi?'<th>Platforms</th>':'')+'</tr>'+
     rows.slice(0,12).map(function(r){
       return '<tr><td>'+(r.url?'<a href="'+esc(r.url)+'" target="_blank" rel="noopener">'+esc(r.tag)+'</a>':esc(r.tag))+'</td>'+
-        '<td>'+esc(r.published.slice(0,10))+'</td><td class="n">'+r.gh+'</td><td class="n">'+n(r.newUsers)+'</td><td class="n">'+n(r.updates)+'</td></tr>';
+        '<td>'+esc(r.published.slice(0,10))+'</td><td class="n">'+r.gh+'</td><td class="n">'+n(r.newUsers)+'</td><td class="n">'+n(r.updates)+'</td>'+
+        '<td class="n">'+relRate(r.perHour)+'</td>'+(multi?'<td>'+relPlatformLine(t,r.platforms)+'</td>':'')+'</tr>';
     }).join('')+'</table>';
 }
 function convPaths(rows){

@@ -11,7 +11,7 @@ gate, not a promise.
 
 ```
 tracker         1.8 KB gzipped   (hard-gated at 3 KB — GA is ~50 KB, Plausible ~1 KB with fewer features)
-dashboard      13.3 KB gzipped   single self-contained HTML file, no framework
+dashboard      13.7 KB gzipped   single self-contained HTML file, no framework
 dependencies    1                (better-sqlite3)
 collect
 throughput      ~139,000 req/s   measured on a laptop, sub-ms latency
@@ -94,6 +94,9 @@ next one — the window in which your site sends people to it. Within that
 window: `newUsers = min(site, github)` and `updates = github − newUsers`.
 `updates` is everything the site did not send: in-app updaters and anyone who
 went straight to GitHub. Drafts and prereleases (nightlies) are ignored.
+Each release also carries `platforms` (its installer downloads by macOS,
+Windows and Linux, from the file extension) and `perHour` (its GitHub downloads
+over that window; `null` under an hour), and the dashboard shows both.
 
 | Entry field | Meaning |
 |---|---|

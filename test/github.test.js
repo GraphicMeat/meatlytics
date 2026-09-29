@@ -172,7 +172,7 @@ test('report: per-release windows split gh downloads into new users and updates'
   assert.strictEqual(v3.url, 'https://github.com/o/n/releases/tag/v3');
 
   // gh/newUsers/updates cover the two releases with site data and add up; allTime is all three
-  assert.deepStrictEqual(app.totals, { gh: 60, newUsers: 3, updates: 57, releases: 2, allTime: 90 });
+  assert.deepStrictEqual(app.totals, { gh: 60, newUsers: 3, updates: 57, releases: 2, allTime: 90, platforms: { macOS: 90 } });
   assert.strictEqual(app.totals.newUsers + app.totals.updates, app.totals.gh);
 });
 
@@ -230,11 +230,50 @@ test('report: assets option overrides the installer default', async () => {
   assert.strictEqual(out.apps[0].releases[0].gh, 8);
 });
 
+test('report: per-platform split by installer extension, zero counts omitted, totals across releases', async () => {
+  const rels = [
+    release('v2', '2026-09-10T00:00:00Z', [['A.dmg', 5]]),
+    release('v1', '2026-09-01T00:00:00Z', [
+      ['A.dmg', 10], ['A-setup.exe', 5], ['A.msi', 1], ['A.deb', 2], ['A.AppImage', 3], ['A.snap', 4],
+      ['A.rpm', 0], // no downloads: no platform entry of its own
+      ['A.zip', 9], ['appcast.xml', 99], // not installers
+    ]),
+  ];
+  const [app] = (await report('o/n', [], rels)).apps;
+  const [v2, v1] = app.releases;
+  assert.deepStrictEqual(v1.platforms, { macOS: 10, Windows: 6, Linux: 9 });
+  assert.deepStrictEqual(v2.platforms, { macOS: 5 });
+  assert.deepStrictEqual(app.totals.platforms, { macOS: 15, Windows: 6, Linux: 9 });
+  assert.strictEqual(v1.gh, 25);
+
+  // an assets override can let through files with no known platform
+  const [other] = (await report({ repo: 'o/n', assets: '\\.(dmg|zip)$' }, [], rels)).apps;
+  assert.deepStrictEqual(other.releases[1].platforms, { macOS: 10, Other: 9 });
+});
+
+test('report: perHour is lifetime downloads over the release window, null under an hour', async () => {
+  const day = 86400000;
+  const latest = new Date(Date.now() - 2 * day).toISOString(); // still the latest: window runs to now
+  const [app] = (
+    await report('o/n', [], [
+      release('vD', latest, [['A.dmg', 96]]),
+      release('vC', '2026-09-05T04:30:00Z', [['A.dmg', 3]]),
+      release('vB', '2026-09-05T04:00:00Z', [['A.dmg', 8]]), // 30 min until vC
+      release('vA', '2026-09-01T00:00:00Z', [['A.dmg', 50]]), // 100 h until vB
+    ])
+  ).apps;
+  const byTag = Object.fromEntries(app.releases.map((r) => [r.tag, r.perHour]));
+  assert.strictEqual(byTag.vA, 0.5);
+  assert.strictEqual(byTag.vB, null);
+  assert.ok(Math.abs(byTag.vD - 2) < 0.01, `vD perHour ${byTag.vD}`);
+  assert.ok(byTag.vC > 0);
+});
+
 test('report: no signal events at all -> gh totals only, no split', async () => {
   const out = await report('o/n', []);
   const [app] = out.apps;
   assert.ok(app.releases.every((r) => r.site === null && r.updates === null));
-  assert.deepStrictEqual(app.totals, { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 90 });
+  assert.deepStrictEqual(app.totals, { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 90, platforms: { macOS: 90 } });
 });
 
 test('report: a failing repo is reported as unavailable, others still answer', async () => {
@@ -299,7 +338,7 @@ test('GET /gm/api/releases: auth-gated, joins track() downloads with GitHub coun
   const [v9] = res.body.apps[0].releases;
   // published a day ago, before the first tracked download -> window predates tracking
   assert.deepStrictEqual([v9.tag, v9.gh, v9.site], ['v9', 12, null]);
-  assert.deepStrictEqual(res.body.apps[0].totals, { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 12 });
+  assert.deepStrictEqual(res.body.apps[0].totals, { gh: 0, newUsers: 0, updates: 0, releases: 0, allTime: 12, platforms: { macOS: 12 } });
   mw.stop();
 });
 
