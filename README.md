@@ -325,7 +325,8 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/funnel` | Ad-hoc funnel: `?steps=/,/pricing,signup` | " |
 | `GET /gm/api/heatmap` | Click/mouse density per page + viewport | " (or short-lived overlay token) |
 | `GET /gm/api/realtime` | Active visitors, last 5 min | " |
-| `GET /gm/api/events` | Custom event counts | " |
+| `GET /gm/api/events` | Custom event counts; `?by=prop` splits names into `name:value` (400 on a bad key) | " |
+| `GET /gm/api/outbound` | Cross-origin link clicks: `[{host, path, count, uniques}]`, top 200 by count | " |
 | `GET /gm/api/conversions` | Download success rate: daily counts, per page, per file | " |
 | `GET /gm/api/releases` | New users vs updates per GitHub release (needs `github`; ignores `from`/`to`/`tag`) | " |
 | `GET /gm/api/countries` | Visitors per country | " |

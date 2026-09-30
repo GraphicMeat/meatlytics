@@ -241,3 +241,46 @@ test('tags + compare + ?tag= filter over HTTP', async () => {
   assert.ok(bad.body.error);
   mw.stop();
 });
+
+test('events: ?by=<prop> splits names over HTTP; bad prop key -> 400', async () => {
+  const { mw, server } = makeApp();
+  const today = new Date().toISOString().slice(0, 10);
+  const ev = (visitor, props) => ({ ts: Date.now(), site_id: 'test', visitor, session_id: 's' + visitor, type: 'custom', path: '/', name: 'product_action', props_json: props });
+  mw.store.insertEvents([ev('A', '{"action":"download"}'), ev('B', '{"action":"download"}'), ev('C', '{"action":"donate"}')]);
+  const auth = { Authorization: 'Bearer ' + KEY };
+  const q = `from=${today}&to=${today}`;
+
+  const plain = await request(server).get(`/gm/api/events?${q}`).set(auth).expect(200);
+  assert.deepStrictEqual(plain.body, [{ name: 'product_action', count: 3, uniques: 3 }]);
+  const by = await request(server).get(`/gm/api/events?${q}&by=action`).set(auth).expect(200);
+  assert.deepStrictEqual(by.body, [
+    { name: 'product_action:download', count: 2, uniques: 2 },
+    { name: 'product_action:donate', count: 1, uniques: 1 },
+  ]);
+  // a key that could break out of the JSON path is rejected, not passed to SQLite
+  await request(server).get(`/gm/api/events?${q}&by=${encodeURIComponent('a"b')}`).set(auth).expect(400).expect('Content-Type', /json/);
+  mw.stop();
+});
+
+test('outbound: needs auth; lists host + page with counts over HTTP', async () => {
+  const { mw, server } = makeApp();
+  await request(server).get('/gm/api/outbound').expect(401);
+  const today = new Date().toISOString().slice(0, 10);
+  const ev = (visitor, path, name, tag) => ({ ts: Date.now(), site_id: 'test', visitor, session_id: 's' + visitor, type: 'outbound', path, name, tag });
+  mw.store.insertEvents([
+    ev('A', '/', 'apps.apple.com'),
+    ev('B', '/', 'apps.apple.com'),
+    ev('B', '/', 'apps.apple.com'),
+    ev('A', '/blog', 'github.com', 'v2'),
+  ]);
+  const auth = { Authorization: 'Bearer ' + KEY };
+  const q = `from=${today}&to=${today}`;
+  const all = await request(server).get(`/gm/api/outbound?${q}`).set(auth).expect(200).expect('Content-Type', /json/);
+  assert.deepStrictEqual(all.body, [
+    { host: 'apps.apple.com', path: '/', count: 3, uniques: 2 },
+    { host: 'github.com', path: '/blog', count: 1, uniques: 1 },
+  ]);
+  const v2 = await request(server).get(`/gm/api/outbound?${q}&tag=v2`).set(auth).expect(200);
+  assert.deepStrictEqual(v2.body, [{ host: 'github.com', path: '/blog', count: 1, uniques: 1 }]);
+  mw.stop();
+});

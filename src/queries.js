@@ -418,6 +418,8 @@ function platforms(db, opts) {
   return { browsers: dim('browser'), os: dim('os'), devices: dim('device'), langs: dim('lang') };
 }
 
+const PROP_KEY = /^[A-Za-z0-9_]{1,32}$/;
+
 // by: prop key (caller-validated) -> names split into 'name:value'. Events
 // without that prop keep the bare name, as do props stored truncated (invalid
 // JSON; json_extract would throw on them).
@@ -434,6 +436,20 @@ function eventsList(db, opts) {
        GROUP BY 1 ORDER BY count DESC LIMIT 100`
     )
     .all({ siteId: opts.siteId, from, to, tag: opts.tag, by: opts.by });
+}
+
+// Cross-origin link clicks (tracker type 'outbound': hostname in name, page in
+// path), one row per host + page, busiest first.
+function outbound(db, opts) {
+  const { from, to } = range(opts);
+  return db
+    .prepare(
+      `SELECT name host, path, COUNT(*) count, COUNT(DISTINCT visitor) uniques FROM events
+       WHERE site_id=@siteId AND type='outbound' AND name IS NOT NULL
+         AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${tagWhere(opts.tag)}
+       GROUP BY name, path ORDER BY count DESC, host, path LIMIT 200`
+    )
+    .all({ siteId: opts.siteId, from, to, tag: opts.tag });
 }
 
 // Every tag in the retained raw events (all time, i.e. the 90-day window),
@@ -472,7 +488,7 @@ function parseSegment(seg, opts) {
 // visitor-days, like conversions). rows merges the two by event name, delta =
 // b.rate - a.rate, biggest combined uniques first. Bad input -> { error }.
 function compare(db, opts) {
-  if (opts.by !== undefined && !/^[A-Za-z0-9_]{1,32}$/.test(opts.by)) {
+  if (opts.by !== undefined && !PROP_KEY.test(opts.by)) {
     return { error: 'by must be a prop key: [A-Za-z0-9_]{1,32}' };
   }
   const out = {};
@@ -498,4 +514,4 @@ function compare(db, opts) {
   return out;
 }
 
-module.exports = { overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };
+module.exports = { PROP_KEY, overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, outbound, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };

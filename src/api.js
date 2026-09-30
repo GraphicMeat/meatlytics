@@ -71,8 +71,14 @@ function handle(req, res, url, ctx) {
       })), true;
     case '/gm/api/realtime':
       return json(res, Q.realtime(db, { siteId: ctx.siteId })), true;
-    case '/gm/api/events':
-      return json(res, Q.eventsList(db, base)), true;
+    case '/gm/api/events': {
+      // ?by=<prop key> splits names into 'name:value'. The key goes into a JSON path, so it is validated here.
+      const by = sp.get('by') || undefined;
+      if (by !== undefined && !Q.PROP_KEY.test(by)) return json(res, { error: 'by must be a prop key: [A-Za-z0-9_]{1,32}' }, 400), true;
+      return json(res, Q.eventsList(db, { ...base, by })), true;
+    }
+    case '/gm/api/outbound':
+      return json(res, Q.outbound(db, base)), true;
     case '/gm/api/conversions':
       return json(res, Q.conversions(db, { ...base, exclude })), true;
     case '/gm/api/releases':

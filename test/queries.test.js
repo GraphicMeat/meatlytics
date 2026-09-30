@@ -221,6 +221,29 @@ test('eventsList: custom event counts + uniques', () => {
   store.close();
 });
 
+test('outbound: host + page, count + uniques, count desc; ignores other types, range and tag', () => {
+  const store = openStore(tmpDbPath());
+  const ob = (d, hm, visitor, path, host, extra) => ({ ts: at(d, hm), site_id: SITE, visitor, session_id: 's' + visitor, type: 'outbound', path, name: host, ...extra });
+  store.insertEvents([
+    ob(D2, '10:00', 'A', '/home', 'apps.apple.com'),
+    ob(D2, '10:01', 'A', '/home', 'apps.apple.com'),
+    ob(D2, '10:02', 'B', '/home', 'apps.apple.com'),
+    ob(D2, '10:03', 'B', '/pricing', 'apps.apple.com', { tag: 'v2' }),
+    ob(D1, '10:04', 'C', '/home', 'github.com'),
+    ob('2000-01-01', '10:05', 'C', '/home', 'old.example'), // out of range
+    { ts: at(D2, '10:06'), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'custom', path: '/home', name: 'signup' },
+  ]);
+  assert.deepStrictEqual(Q.outbound(store.db, RANGE), [
+    { host: 'apps.apple.com', path: '/home', count: 3, uniques: 2 },
+    { host: 'apps.apple.com', path: '/pricing', count: 1, uniques: 1 },
+    { host: 'github.com', path: '/home', count: 1, uniques: 1 },
+  ]);
+  assert.deepStrictEqual(Q.outbound(store.db, { ...RANGE, tag: 'v2' }), [{ host: 'apps.apple.com', path: '/pricing', count: 1, uniques: 1 }]);
+  assert.strictEqual(Q.outbound(store.db, { ...RANGE, tag: 'none' }).length, 2);
+  assert.deepStrictEqual(Q.outbound(store.db, { ...RANGE, siteId: 'other' }), []);
+  store.close();
+});
+
 // --- excluded paths ----------------------------------------------------------
 
 test('normalizeExcludes: full URLs -> paths, trailing slash stripped, deduped, blanks dropped', () => {
