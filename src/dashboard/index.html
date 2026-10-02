@@ -161,6 +161,7 @@ var state = {view:'overview', site:'local', from:'', to:'', tag:'', rtTimer:0};
 
 function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function pct(x){ return (x*100).toFixed(1)+'%'; }
+function pctOrDash(x){ return x==null?'-':pct(x); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
 
 function api(path){
@@ -481,12 +482,13 @@ function combineSites(sites, which){
     var one = sites.filter(function(s){ return s.name===which; })[0];
     if(one && one.ok) picked=[one]; else if(one) offline.push(one.name);
   }
-  if(!picked.length) return {visitors:0,pageviews:0,avgDuration:0,bounceRate:0,timeseries:[],offline:offline};
-  var visitors=0,pageviews=0,durSum=0,bounceSum=0,tsMap={};
+  if(!picked.length) return {visitors:0,pageviews:0,avgDuration:0,bounceRate:0,engagementRate:null,timeseries:[],offline:offline};
+  var visitors=0,pageviews=0,durSum=0,bounceSum=0,engSum=0,engW=0,tsMap={};
   picked.forEach(function(s){
     var d=s.data;
     visitors+=d.visitors; pageviews+=d.pageviews;
     durSum+=d.avgDuration*d.pageviews; bounceSum+=d.bounceRate*d.pageviews;
+    if(typeof d.engagementRate==='number'){ var w=typeof d.sessions==='number'?d.sessions:d.pageviews; engSum+=d.engagementRate*w; engW+=w; }
     (d.timeseries||[]).forEach(function(row){
       var e=tsMap[row.date]||{date:row.date,visitors:0,pageviews:0};
       e.visitors+=row.visitors; e.pageviews+=row.pageviews; tsMap[row.date]=e;
@@ -494,7 +496,7 @@ function combineSites(sites, which){
   });
   var ts=Object.keys(tsMap).sort().map(function(k){return tsMap[k]});
   return {visitors:visitors,pageviews:pageviews,avgDuration:pageviews?Math.round(durSum/pageviews):0,
-    bounceRate:pageviews?bounceSum/pageviews:0,timeseries:ts,offline:offline};
+    bounceRate:pageviews?bounceSum/pageviews:0,engagementRate:engW?engSum/engW:null,timeseries:ts,offline:offline};
 }
 
 function render(){
@@ -517,7 +519,7 @@ function renderOverview(){
       el.innerHTML=
         '<div class="cards">'+
           card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
-          card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+
+          card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+card('Engaged',pctOrDash(o.engagementRate))+
         '</div>'+
         '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
         (o.offline.length?'<p class="mut">Offline: '+o.offline.map(esc).join(', ')+'</p>':'');
@@ -546,7 +548,7 @@ function renderOverview(){
 function card(k,v){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
 function cards(o){
   return '<div class="cards">'+card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
-    card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+'</div>';
+    card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+card('Engaged',pctOrDash(o.engagementRate))+'</div>';
 }
 function pagesTable(rows){
   if(!rows.length) return '<p class="mut">No data</p>';
@@ -744,7 +746,7 @@ function loadCompare(){
   api('compare?'+q).then(function(d){
     if(d.error){ $('#cmpres').innerHTML='<p class="mut">'+esc(d.error)+'</p>'; return; }
     function seg(k,s){ return '<p class="mut" style="margin:0 0 6px">'+k+' · '+esc(s.segment)+'</p><div class="cards">'+
-      card('Visitors',s.visitors)+card('Pageviews',s.pageviews)+card('Sessions',s.sessions)+card('Bounce rate',pct(s.bounceRate))+'</div>'; }
+      card('Visitors',s.visitors)+card('Pageviews',s.pageviews)+card('Sessions',s.sessions)+card('Bounce rate',pct(s.bounceRate))+card('Engaged',pctOrDash(s.engagementRate))+'</div>'; }
     $('#cmpres').innerHTML=seg('A',d.a)+seg('B',d.b)+'<div class="panel"><h3>Events</h3>'+(d.rows.length?
       '<table><tr><th>Event</th><th class="n">A uniques</th><th class="n">A rate</th><th class="n">B uniques</th><th class="n">B rate</th><th class="n">Δ rate</th></tr>'+
       d.rows.map(function(r){

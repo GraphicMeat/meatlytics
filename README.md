@@ -151,7 +151,7 @@ reserved word `none`) is stored as untagged. Pages without a tag send none.
   ```
 
 - **`GET /gm/api/compare?a=<segment>&b=<segment>[&by=<propKey>]`** returns
-  visitors, pageviews, sessions, bounce rate and the custom events of two
+  visitors, pageviews, sessions, bounce rate, engagement rate and the custom events of two
   segments side by side. A segment is one of:
   - `untagged`
   - `tag:<name>`
@@ -175,6 +175,7 @@ GET /gm/api/compare?a=untagged&b=tag:redesign-2026-09&by=cta
 ```json
 {
   "a": { "segment": "untagged", "visitors": 2210, "pageviews": 5120, "sessions": 2398, "bounceRate": 0.61,
+         "engagementRate": 0.48,
          "events": [{ "name": "home_cta:demo", "count": 150, "uniques": 132, "rate": 0.0597 }], "...": "..." },
   "b": { "segment": "tag:redesign-2026-09", "visitors": 412, "...": "..." },
   "rows": [
@@ -318,7 +319,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /_analytics/api/key` | Read the current `apiKey` | dashboard session |
 | `POST /_analytics/api/key/rotate` | Mint a new `apiKey` (400 if `opts.apiKey` overrides it) | dashboard session |
 | `GET /gm-overlay.js` | Heatmap overlay module (lazy-loaded, dashboard preview only) | public |
-| `GET /gm/api/overview` | Totals + timeseries | Bearer `apiKey` or dashboard session |
+| `GET /gm/api/overview` | Totals, bounce + engagement rate, timeseries | Bearer `apiKey` or dashboard session |
 | `GET /gm/api/pages` | Top pages | " |
 | `GET /gm/api/sources` | Referrer classes, domains, campaigns | " |
 | `GET /gm/api/flows` | Session path chains | " |
@@ -339,6 +340,17 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 All stats endpoints take `?from=YYYY-MM-DD&to=YYYY-MM-DD` and an optional
 `&tag=` (`none` = untagged only). `tags` ignores both. `compare` ignores `tag`
 and applies `from`/`to` to tag segments only.
+
+**Bounce vs engagement.** `bounceRate` is the share of sessions with exactly one
+pageview, which counts a visitor who read for three minutes and then clicked
+Download as a bounce. `overview` (and each `compare` segment) therefore also
+returns `engagedSessions` and `engagementRate = engagedSessions / sessions`. A
+session is engaged if it has 2 or more pageviews, or at least 10 s of visible
+time (the summed `duration` events), or any `outbound`, `download`, `custom` or
+`submit` event. Plain clicks, scrolls and mouse samples do not count. Sessions
+are the same ones `bounceRate` divides by, under the same `tag` and excluded-path
+filters, and the "All sites" view weights each peer by its sessions (peers on an
+older version that do not send the field are left out, not counted as 0).
 
 ## Privacy
 

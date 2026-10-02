@@ -500,3 +500,122 @@ test('compare: malformed segments or by -> {error}', () => {
   }
   store.close();
 });
+
+// --- engagement rate ---------------------------------------------------------
+const ED = '2026-09-20';
+// One session per visitor, one pageview unless a case adds more.
+function engagedRate(events, extra = {}) {
+  const store = openStore(tmpDbPath());
+  const ev = (hm, type, e) => ({ ts: at(ED, hm), site_id: SITE, visitor: 'V', session_id: 'sV', type, path: '/', ...extra, ...e });
+  store.insertEvents([ev('10:00', 'pageview'), ...events.map(([hm, type, e]) => ev(hm, type, e))]);
+  const o = Q.overview(store.db, { siteId: SITE, from: ED, to: ED });
+  store.close();
+  return o;
+}
+
+test('engagement: one pageview + 12s of visible time is engaged, 9s is not', () => {
+  const o = engagedRate([['10:00', 'duration', { value_int: 7000 }], ['10:01', 'duration', { value_int: 5000 }]]);
+  assert.strictEqual(o.sessions, 1);
+  assert.strictEqual(o.bounceRate, 1); // still a bounce by the old definition
+  assert.strictEqual(o.engagedSessions, 1);
+  assert.strictEqual(o.engagementRate, 1);
+  const short = engagedRate([['10:00', 'duration', { value_int: 9999 }]]);
+  assert.strictEqual(short.engagedSessions, 0);
+  assert.strictEqual(short.engagementRate, 0);
+});
+
+test('engagement: one pageview with only clicks, scrolls and mouse samples is not engaged', () => {
+  const o = engagedRate([
+    ['10:00', 'click', { x_pct: 10, y_pct: 10, viewport_w: 1440 }],
+    ['10:00', 'scroll', { value_int: 90 }],
+    ['10:00', 'mouse', { viewport_w: 1440, props_json: '{"1:1":3}' }],
+  ]);
+  assert.strictEqual(o.sessions, 1);
+  assert.strictEqual(o.engagedSessions, 0);
+  assert.strictEqual(o.engagementRate, 0);
+});
+
+test('engagement: one pageview + an outbound, download, custom or submit event is engaged', () => {
+  for (const type of ['outbound', 'download', 'custom', 'submit']) {
+    const o = engagedRate([['10:01', type, { name: 'x' }]]);
+    assert.strictEqual(o.engagedSessions, 1, type);
+    assert.strictEqual(o.engagementRate, 1, type);
+  }
+});
+
+test('engagement: two pageviews is engaged', () => {
+  const o = engagedRate([['10:01', 'pageview', { path: '/pricing' }]]);
+  assert.strictEqual(o.bounceRate, 0);
+  assert.strictEqual(o.engagedSessions, 1);
+  assert.strictEqual(o.engagementRate, 1);
+});
+
+test('engagement: a session with no pageview in range is not a session (no orphan engaged count)', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(ED, '10:00'), site_id: SITE, visitor: 'G', session_id: 'sG', type: 'custom', path: '/', name: 'x' },
+    { ts: at(ED, '11:00'), site_id: SITE, visitor: 'H', session_id: 'sH', type: 'pageview', path: '/' },
+  ]);
+  const o = Q.overview(store.db, { siteId: SITE, from: ED, to: ED });
+  assert.strictEqual(o.sessions, 1);
+  assert.strictEqual(o.engagedSessions, 0);
+  assert.strictEqual(o.engagementRate, 0);
+  assert.strictEqual(Q.overview(store.db, { siteId: SITE, from: '2026-01-01', to: '2026-01-02' }).engagementRate, 0);
+  store.close();
+});
+
+test('engagement: same denominator as bounceRate on the shared fixture', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  const o = Q.overview(store.db, RANGE);
+  // sA, sB, sD have 2+ pageviews; sC is the lone single-pageview bounce
+  assert.strictEqual(o.sessions, 4);
+  assert.strictEqual(o.engagedSessions, 3);
+  assert.strictEqual(o.engagementRate, 3 / 4);
+  store.close();
+});
+
+test('engagement: tag filter limits the sessions and the engagement events', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  // O1 2 pageviews (engaged), O2 bounce | X1 bounce | N1 pageview+custom, N2 2 pageviews, N3 pageview+custom
+  const rate = (tag) => Q.overview(store.db, tag === undefined ? ALL : { ...ALL, tag });
+  assert.strictEqual(rate().engagedSessions, 4);
+  assert.strictEqual(rate().engagementRate, 4 / 6);
+  assert.strictEqual(rate('none').engagementRate, 1 / 2);
+  assert.strictEqual(rate('v2').engagedSessions, 3);
+  assert.strictEqual(rate('v2').engagementRate, 1);
+  assert.strictEqual(rate('other').engagementRate, 0);
+  assert.strictEqual(rate('nope').engagementRate, 0);
+  store.close();
+});
+
+test('engagement: excluded paths are dropped from the filtered block like bounce is', () => {
+  const store = openStore(tmpDbPath());
+  const ev = (hm, sid, type, e) => ({ ts: at(ED, hm), site_id: SITE, visitor: sid, session_id: sid, type, path: '/', ...e });
+  store.insertEvents([
+    ev('10:00', 'a', 'pageview'),
+    ev('10:01', 'a', 'pageview', { path: '/stats' }), // 2nd pageview is on an excluded page
+    ev('11:00', 'b', 'pageview'),
+    ev('11:01', 'b', 'custom', { name: 'x' }),
+  ]);
+  const o = Q.overview(store.db, { siteId: SITE, from: ED, to: ED, exclude: ['/stats'] });
+  assert.strictEqual(o.engagementRate, 1);
+  assert.strictEqual(o.filtered.sessions, 2);
+  assert.strictEqual(o.filtered.engagedSessions, 1); // a is now a single-pageview session
+  assert.strictEqual(o.filtered.engagementRate, 1 / 2);
+  store.close();
+});
+
+test('compare: every segment carries engagementRate (empty segment is 0, never NaN)', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compare(store.db, { siteId: SITE, a: 'untagged', b: 'tag:v2' });
+  assert.strictEqual(c.a.engagedSessions, 1);
+  assert.strictEqual(c.a.engagementRate, 1 / 2);
+  assert.strictEqual(c.b.engagedSessions, 3);
+  assert.strictEqual(c.b.engagementRate, 1);
+  const empty = Q.compare(store.db, { siteId: SITE, a: 'untagged', b: 'tag:nope' });
+  assert.strictEqual(empty.b.engagementRate, 0);
+  store.close();
+});

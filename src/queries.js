@@ -65,6 +65,9 @@ function normalizeExcludes(list) {
   return out.slice(0, 50);
 }
 
+// Visible time (sum of duration events, ms) that makes a one-page session engaged.
+const ENGAGED_MS = 10000;
+
 function overview(db, opts) {
   const { from, to } = range(opts);
   const p = { siteId: opts.siteId, from, to, ex: '[]', tag: opts.tag };
@@ -104,6 +107,24 @@ function overviewStats(db, p, extra) {
        )`
     )
     .get(p).c;
+  // Engaged = of the sessions counted above (>= 1 pageview), those with 2+
+  // pageviews, or >= ENGAGED_MS of visible time, or a goal-type event. Clicks,
+  // scrolls and mouse samples are noise and do not count. Same site/range/extra
+  // predicate as sess, so the denominator is identical to bounceRate's.
+  const engaged = db
+    .prepare(
+      `SELECT COUNT(*) c FROM (
+         SELECT session_id,
+           SUM(type='pageview') pv,
+           SUM(CASE WHEN type='duration' THEN MAX(COALESCE(value_int,0),0) ELSE 0 END) dur,
+           SUM(type IN ('outbound','download','custom','submit')) act
+         FROM events
+         WHERE site_id=@siteId AND type IN ('pageview','duration','outbound','download','custom','submit')
+           AND date(ts/1000,'unixepoch') BETWEEN @from AND @to AND ${extra}
+         GROUP BY session_id HAVING pv>=1 AND (pv>=2 OR dur>=${ENGAGED_MS} OR act>0)
+       )`
+    )
+    .get(p).c;
   const timeseries = db
     .prepare(
       `SELECT ${DAY} date, COUNT(DISTINCT visitor) visitors, COUNT(*) pageviews
@@ -117,6 +138,8 @@ function overviewStats(db, p, extra) {
     avgDuration: tot.pageviews ? Math.round(dur.d / tot.pageviews) : 0,
     sessions: sess,
     bounceRate: sess ? bounces / sess : 0,
+    engagedSessions: engaged,
+    engagementRate: sess ? engaged / sess : 0,
     timeseries,
   };
 }

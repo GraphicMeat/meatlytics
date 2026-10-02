@@ -233,6 +233,10 @@ test('tags + compare + ?tag= filter over HTTP', async () => {
     .expect(200);
   assert.strictEqual(c.body.a.segment, 'untagged');
   assert.strictEqual(c.body.b.visitors, 1);
+  assert.strictEqual(c.body.b.engagementRate, 1); // pageview + custom event
+  assert.strictEqual(c.body.a.engagementRate, 0); // lone pageview
+  assert.strictEqual(all.body.engagedSessions, 1);
+  assert.strictEqual(all.body.engagementRate, 1 / 2);
   assert.deepStrictEqual(c.body.rows, [
     { name: 'home_cta:demo', a: { count: 0, uniques: 0, rate: 0 }, b: { count: 1, uniques: 1, rate: 1 }, delta: 1 },
   ]);
