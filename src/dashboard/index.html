@@ -434,9 +434,15 @@ function setRange(days){
   state.to=to.toISOString().slice(0,10); state.from=from.toISOString().slice(0,10);
   $('#from').value=state.from; $('#to').value=state.to;
 }
+// remember the Day/Week/Month preset across reloads (per browser)
+function pickRange(days){
+  $$('#range button').forEach(function(x){x.classList.toggle('on', +x.dataset.p===days)});
+  setRange(days);
+}
 $$('#range button').forEach(function(b){ b.onclick=function(){
-  $$('#range button').forEach(function(x){x.classList.remove('on')}); b.classList.add('on');
-  setRange(+b.dataset.p); render();
+  pickRange(+b.dataset.p);
+  try{ localStorage.setItem('gm.range', b.dataset.p); }catch(e){}
+  render();
 };});
 $('#from').onchange=function(){ state.from=this.value; render(); };
 $('#to').onchange=function(){ state.to=this.value; render(); };
@@ -855,7 +861,8 @@ function renderRealtime(){
 }
 
 // ---------- boot ----------
-setRange(7);
+var savedRange=7; try{ savedRange=+localStorage.getItem('gm.range')||7; }catch(e){}
+pickRange([1,7,30].indexOf(savedRange)>=0?savedRange:7);
 // deep link: #flows / #funnels / #compare / #heatmaps / #realtime selects that view on load
 var dl=location.hash.slice(1);
 if(['flows','funnels','compare','heatmaps','realtime'].indexOf(dl)>=0){
