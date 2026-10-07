@@ -740,7 +740,7 @@ function renderCompare(){
     '<div class="row"><button id="cmppair">A vs B</button><button id="cmpall">All versions</button></div>'+
     '<div class="row" id="cmppick">'+pick('a')+pick('b')+'</div>'+
     '<div class="row">Split events by prop <input id="cmpby" placeholder="optional" style="width:120px"><button id="cmpgo" class="on">Compare</button></div>'+
-    '<p class="mut" style="margin:0">Versions are the <code>data-tag</code> values on your site; Untagged is traffic without one. '+
+    '<p class="mut" style="margin:0">Versions are the <code>data-tag</code> values on your site, or the deploy version when a page sets none; Untagged is traffic with neither. '+
     'Tag segments cover all retained data (90 days); the toolbar range and tag do not apply here.</p></div><div id="cmpres"></div>';
   ['a','b'].forEach(function(k){
     $('#cmp'+k).onchange=function(){ $('#cmpd'+k).classList.toggle('hidden',this.value!=='date'); loadCompare(); };
@@ -749,16 +749,16 @@ function renderCompare(){
   $('#cmpgo').onclick=loadCompare;
   $('#cmppair').onclick=function(){ setCmpMode('pair'); };
   $('#cmpall').onclick=function(){ setCmpMode('all'); };
-  // A/B default: untagged (old site) vs the newest tag, or the two newest tags
-  // when nothing is untagged; no tags yet -> last week vs this week
+  // A/B default: the two newest tags (e.g. last deploy vs the one before), or
+  // untagged (old site) vs the only tag; no tags yet -> last week vs this week
   loadTags().then(function(rows){
-    var t=rows.filter(function(r){return r.tag}), old=rows.some(function(r){return !r.tag&&r.visitors});
+    var t=rows.filter(function(r){return r.tag});
     var opts='<option value="untagged">Untagged</option>'+t.map(function(r){
       return '<option value="tag:'+esc(r.tag)+'">'+esc(r.tag)+' · '+esc(r.first)+(r.last!==r.first?' → '+esc(r.last):'')+'</option>';
     }).join('')+'<option value="date">Date range…</option>';
     $('#cmpa').innerHTML=$('#cmpb').innerHTML=opts;
     $('#cmpfa').value=day(-13); $('#cmpta').value=day(-7); $('#cmpfb').value=day(-6); $('#cmptb').value=day(0);
-    var a=!t.length?'date':old||t.length<2?'untagged':'tag:'+t[1].tag, b=t.length?'tag:'+t[0].tag:'date';
+    var a=!t.length?'date':t.length<2?'untagged':'tag:'+t[1].tag, b=t.length?'tag:'+t[0].tag:'date';
     $('#cmpa').value=a; $('#cmpb').value=b;
     $('#cmpda').classList.toggle('hidden',a!=='date'); $('#cmpdb').classList.toggle('hidden',b!=='date');
     setCmpMode(cmpMode);
@@ -778,9 +778,10 @@ function loadCompare(){
   var by=$('#cmpby').value.trim();
   var q=(cmpMode==='all'?'all=1':'a='+encodeURIComponent(cmpSeg('a'))+'&b='+encodeURIComponent(cmpSeg('b')))+(by?'&by='+encodeURIComponent(by):'');
   $('#cmpres').innerHTML='<p class="mut">Loading…</p>';
-  api('compare?'+q).then(function(d){
+  Promise.all([api('compare?'+q),loadTags()]).then(function(x){
+    var d=x[0];
     if(d.error){ $('#cmpres').innerHTML='<p class="mut">'+esc(d.error)+'</p>'; return; }
-    $('#cmpres').innerHTML=cmpMode==='all'?renderAllVersions(d):renderPair(d);
+    $('#cmpres').innerHTML=cmpMode==='all'?renderAllVersions(d,x[1]):renderPair(d);
   }).catch(function(){ $('#cmpres').innerHTML='<p class="mut">No data</p>'; });
 }
 function deltaCell(x){
@@ -800,12 +801,13 @@ function renderPair(d){
 }
 // One row per version for the stats; events get one column per version, each
 // cell = rate with its change vs the previous (older) version underneath.
-function renderAllVersions(d){
+function renderAllVersions(d,tags){
   if(!d.segments.length) return '<p class="mut">No traffic yet</p>';
-  var S=d.segments;
+  var S=d.segments, first={};
+  tags.forEach(function(t){ if(t.tag) first['tag:'+t.tag]=t.first; });
   return '<div class="panel"><h3>Versions</h3><div style="overflow-x:auto"><table><tr><th>Version</th><th class="n">Visitors</th><th class="n">Pageviews</th><th class="n">Sessions</th><th class="n">Bounce</th><th class="n">Engaged</th></tr>'+
     S.map(function(s){
-      return '<tr><td style="white-space:nowrap">'+esc(segLabel(s.segment))+'</td><td class="n">'+s.visitors+'</td><td class="n">'+s.pageviews+'</td><td class="n">'+s.sessions+'</td>'+
+      return '<tr><td style="white-space:nowrap">'+esc(segLabel(s.segment))+(first[s.segment]?' <small class="mut">'+esc(first[s.segment])+'</small>':'')+'</td><td class="n">'+s.visitors+'</td><td class="n">'+s.pageviews+'</td><td class="n">'+s.sessions+'</td>'+
         '<td class="n">'+pct(s.bounceRate)+'</td><td class="n">'+pctOrDash(s.engagementRate)+'</td></tr>';
     }).join('')+'</table></div></div>'+
     '<div class="panel"><h3>Event rate by version</h3>'+(d.rows.length?

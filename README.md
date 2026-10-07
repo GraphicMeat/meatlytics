@@ -135,6 +135,23 @@ tracker reads it once at load, so keep `defer` or put the meta first):
 A tag is up to 64 characters of `A-Z a-z 0-9 . _ : -`. Anything else (and the
 reserved word `none`) is stored as untagged. Pages without a tag send none.
 
+**Every deploy as a version, automatically.** Have your deploy write the commit
+into the service's environment and the server stamps it on every event whose
+page set no tag, `track()` included:
+
+```bash
+MEATLYTICS_VERSION=${GITHUB_SHA}    # e.g. in the systemd EnvironmentFile your CI writes
+```
+
+or pass `version` in the options (`version: false` turns it off). A full
+40-character SHA is shortened to 7. A page's own tag still wins, so a redesign
+tag runs on top of deploy versions. Each deploy then shows up in the tag menus
+and as a column in Compare's **All versions**, and Compare opens on the newest
+version against the one before it. Two things change once it's on: untagged
+now means traffic from before the upgrade (so `a=untagged` and `?tag=none` stop
+covering new data), and a tab left open across a deploy is counted as the new
+version, because the server stamps the version it is running.
+
 - **Filter:** every stats endpoint takes `?tag=`. Leave it out for all traffic,
   use `tag=none` for untagged traffic only, or pass a tag name for an exact match.
   The dashboard's tag menu applies it to every range view. Compare, Heatmaps and
@@ -203,8 +220,8 @@ table: pick A and B from a tag dropdown (or a date range), or switch to
 
 Tags live on raw events only, not in the daily rollups, so both sides of a
 comparison must fall inside the 90-day raw retention. Events recorded with
-`track()` are always untagged. With a tag selected, the Downloads rate
-therefore leaves out server-side downloads.
+`track()` carry the deploy version, never a page tag. With a page tag selected,
+the Downloads rate therefore leaves out server-side downloads.
 
 ## Install
 
@@ -301,6 +318,7 @@ analytics({
   apiKey,             // optional override. otherwise minted once and persisted in the DB
   peers,              // optional. [{ name, url, apiKey }] — see Hub mode
   respectDNT,         // optional, default false. if true, tracker no-ops when the browser signals Do Not Track
+  version,            // optional. deploy version stamped on untagged events; default env MEATLYTICS_VERSION; false = off
   github,             // optional. GitHub releases to split new users from updates — see above
   githubFetch,        // optional. fetch implementation for `github` (proxy, auth, tests)
 })

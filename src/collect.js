@@ -78,6 +78,16 @@ function cleanTag(v) {
   return /^[A-Za-z0-9._:-]{1,64}$/.test(t) && t !== 'none' ? t : null;
 }
 
+// Deploy version for batches whose page set no tag: opts.version, else the
+// MEATLYTICS_VERSION env the deploy writes; false opts out. A full git SHA is
+// shortened to 7 so the tag menu stays readable.
+function deployVersion(opts) {
+  if (opts.version === false) return null;
+  const v = opts.version !== undefined ? opts.version : process.env.MEATLYTICS_VERSION;
+  const t = cleanTag(v);
+  return t && /^[0-9a-f]{40}$/.test(t) ? t.slice(0, 7) : t;
+}
+
 function num(v) {
   return Number.isFinite(v) ? v : null;
 }
@@ -140,6 +150,7 @@ function mapEvent(ev, stamp) {
 
 function createCollector(store, opts) {
   const siteId = opts.siteId;
+  const version = deployVersion(opts);
   const queue = [];
   const buckets = new Map(); // ip -> { tokens, last }
   // ponytail: in-memory token bucket, generous for humans; per-process only.
@@ -174,13 +185,14 @@ function createCollector(store, opts) {
       country: resolveCountry(countryHeader),
       browser: plat.browser, os: plat.os, device: plat.device,
       lang: parseLang(lang),
+      tag: version,
     };
   }
 
   function ingest(body, ip, ua, lang, countryHeader) {
     if (!body || typeof body !== 'object' || !Array.isArray(body.e)) return;
     const stamp = stampFor(ip, ua, lang, countryHeader);
-    stamp.tag = cleanTag(body.g); // batch-level: one page load, one tag
+    stamp.tag = cleanTag(body.g) || version; // batch-level: one page load, one tag
     for (const ev of body.e.slice(0, MAX_EVENTS)) {
       const row = mapEvent(ev, stamp);
       if (row) queue.push(row);

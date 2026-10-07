@@ -9,8 +9,8 @@ const { tmpDbPath, dumpAll } = require('./helpers');
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
 
-function makeApp() {
-  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath() });
+function makeApp(extra) {
+  const mw = analytics({ siteId: 'test', dbPath: tmpDbPath(), ...extra });
   const server = http.createServer((req, res) =>
     mw(req, res, () => {
       res.statusCode = 404;
@@ -197,6 +197,46 @@ test('batch tag g -> stamped on every row of that batch as `tag`', async () => {
   const rows = mw.store.db.prepare('SELECT path, tag FROM events ORDER BY id').all();
   assert.deepStrictEqual(rows.map((r) => r.tag), ['redesign-2026-09', 'redesign-2026-09', null]);
   mw.stop();
+});
+
+// Deploy version: stamped on batches whose page sent no tag; a page tag wins.
+async function versionRows(extra, batches) {
+  const { mw, server } = makeApp(extra);
+  for (const b of batches) {
+    await request(server).post('/gm/e').set('User-Agent', UA)
+      .send({ s: 'test', v: 1, ...b, e: [{ t: 'pageview', p: '/' }] }).expect(204);
+  }
+  mw.track({ headers: { 'user-agent': UA } }, { name: 'app.dmg' });
+  mw.collector.flush();
+  const tags = mw.store.db.prepare('SELECT tag FROM events ORDER BY id').all().map((r) => r.tag);
+  mw.stop();
+  return tags;
+}
+
+test('opts.version -> stamped on untagged batches and track(); page tag wins', async () => {
+  const tags = await versionRows({ version: 'ab12cd3' }, [{}, { g: 'redesign-2026-09' }]);
+  assert.deepStrictEqual(tags, ['ab12cd3', 'redesign-2026-09', 'ab12cd3']);
+});
+
+test('MEATLYTICS_VERSION env -> version fallback; full SHA shortened to 7', async () => {
+  process.env.MEATLYTICS_VERSION = '0123456789abcdef0123456789abcdef01234567';
+  try {
+    assert.deepStrictEqual(await versionRows({}, [{}]), ['0123456', '0123456']);
+  } finally {
+    delete process.env.MEATLYTICS_VERSION;
+  }
+});
+
+test('version: false or invalid -> untagged', async () => {
+  process.env.MEATLYTICS_VERSION = 'v1.2.3';
+  try {
+    assert.deepStrictEqual(await versionRows({ version: false }, [{}]), [null, null]);
+  } finally {
+    delete process.env.MEATLYTICS_VERSION;
+  }
+  for (const version of ['none', 'has space', 'a'.repeat(65), 42]) {
+    assert.deepStrictEqual(await versionRows({ version }, [{}]), [null, null], `version=${version}`);
+  }
 });
 
 test('invalid batch tags -> tag is null', async () => {
