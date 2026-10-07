@@ -619,3 +619,47 @@ test('compare: every segment carries engagementRate (empty segment is 0, never N
   assert.strictEqual(empty.b.engagementRate, 0);
   store.close();
 });
+
+test('compareAll: untagged baseline then every tag oldest first, one zero-filled cell per segment', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const c = Q.compareAll(store.db, { siteId: SITE });
+  assert.deepStrictEqual(c.segments.map((s) => s.segment), ['untagged', 'tag:other', 'tag:v2']);
+  assert.deepStrictEqual(c.segments.map((s) => s.visitors), [2, 1, 3]);
+  assert.strictEqual(c.segments[0].bounceRate, 1 / 2);
+  assert.strictEqual(c.segments[2].engagementRate, 1);
+  assert.deepStrictEqual(c.rows.map((r) => r.name), ['home_cta', 'signup']);
+  assert.deepStrictEqual(c.rows[0].cells, [
+    { count: 1, uniques: 1, rate: 1 / 2 },
+    { count: 0, uniques: 0, rate: 0 },
+    { count: 4, uniques: 3, rate: 1 },
+  ]);
+  assert.deepStrictEqual(c.rows[1].cells.map((x) => x.rate), [0, 0, 1 / 3]);
+  store.close();
+});
+
+test('compareAll: honours from/to (empty segments rate 0, never NaN) and by=<prop>', () => {
+  const store = openStore(tmpDbPath());
+  seedTags(store);
+  const r = Q.compareAll(store.db, { siteId: SITE, from: TD1, to: TD1 });
+  assert.deepStrictEqual(r.segments.map((s) => s.visitors), [2, 1, 0]);
+  assert.ok(r.rows.every((row) => row.cells.every((x) => Number.isFinite(x.rate))));
+  const by = Q.compareAll(store.db, { siteId: SITE, by: 'slot' });
+  assert.deepStrictEqual(by.rows.map((row) => row.name), ['home_cta:demo', 'home_cta:download', 'home_cta', 'signup']);
+  assert.deepStrictEqual(by.rows[1].cells.map((x) => x.uniques), [0, 0, 2]);
+  assert.ok(Q.compareAll(store.db, { siteId: SITE, by: 'a.b' }).error);
+  store.close();
+});
+
+test('compareAll: no untagged traffic -> untagged column omitted; no data at all -> no segments', () => {
+  const store = openStore(tmpDbPath());
+  store.insertEvents([
+    { ts: at(TD1), site_id: SITE, visitor: 'A', session_id: 'sA', type: 'pageview', path: '/', tag: 'v1' },
+    { ts: at(TD2), site_id: SITE, visitor: 'B', session_id: 'sB', type: 'pageview', path: '/', tag: 'v2' },
+  ]);
+  assert.deepStrictEqual(Q.compareAll(store.db, { siteId: SITE }).segments.map((s) => s.segment), ['tag:v1', 'tag:v2']);
+  store.close();
+  const empty = openStore(tmpDbPath());
+  assert.deepStrictEqual(Q.compareAll(empty.db, { siteId: SITE }), { segments: [], rows: [] });
+  empty.close();
+});

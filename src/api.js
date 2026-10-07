@@ -93,7 +93,9 @@ function handle(req, res, url, ctx) {
       return json(res, Q.tags(db, base)), true;
     case '/gm/api/compare': {
       // Segments carry their own tag; ?tag= is ignored here, ?from/&to bound tag segments.
-      const r = Q.compare(db, { ...base, a: sp.get('a'), b: sp.get('b'), by: sp.get('by') || undefined });
+      // ?all=1: untagged + every tag as N columns instead of a/b.
+      const by = sp.get('by') || undefined;
+      const r = sp.get('all') === '1' ? Q.compareAll(db, { ...base, by }) : Q.compare(db, { ...base, a: sp.get('a'), b: sp.get('b'), by });
       return json(res, r, r.error ? 400 : 200), true;
     }
     case '/gm/api/hub/overview':

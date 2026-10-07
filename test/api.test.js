@@ -198,7 +198,7 @@ test('excluded paths: session-only settings route persists list, API applies it'
 test('tags + compare: need dashboard auth like every /gm/api/* route; heat token does not open them', async () => {
   const { mw, server } = makeApp();
   const t = mw.auth.makeHeatToken();
-  for (const p of ['/gm/api/tags', '/gm/api/compare?a=untagged&b=tag:v2']) {
+  for (const p of ['/gm/api/tags', '/gm/api/compare?a=untagged&b=tag:v2', '/gm/api/compare?all=1']) {
     await request(server).get(p).expect(401);
     await request(server).get(p + (p.includes('?') ? '&' : '?') + 't=' + t).expect(401);
   }
@@ -243,6 +243,14 @@ test('tags + compare + ?tag= filter over HTTP', async () => {
 
   const bad = await request(server).get('/gm/api/compare?a=untagged&b=nope').set(auth).expect(400).expect('Content-Type', /json/);
   assert.ok(bad.body.error);
+
+  const every = await request(server).get('/gm/api/compare?all=1&by=cta').set(auth).expect(200);
+  assert.deepStrictEqual(every.body.segments.map((s) => [s.segment, s.visitors]), [['untagged', 1], ['tag:redesign-2026-09', 1]]);
+  assert.deepStrictEqual(every.body.rows, [
+    { name: 'home_cta:demo', cells: [{ count: 0, uniques: 0, rate: 0 }, { count: 1, uniques: 1, rate: 1 }] },
+  ]);
+  const badBy = await request(server).get('/gm/api/compare?all=1&by=a.b').set(auth).expect(400);
+  assert.ok(badBy.body.error);
   mw.stop();
 });
 

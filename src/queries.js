@@ -506,22 +506,28 @@ function parseSegment(seg, opts) {
   return m && m[1] <= m[2] ? { from: m[1], to: m[2] } : null;
 }
 
+// One segment's overview stats + custom events, each with rate = uniques /
+// visitors (both visitor-days, like conversions). seg is parseSegment's output.
+function segmentStats(db, opts, seg) {
+  const p = { siteId: opts.siteId, ...seg };
+  const s = overviewStats(db, p, tagWhere(seg.tag));
+  s.events = eventsList(db, { ...p, by: opts.by }).map((e) => ({ ...e, rate: s.visitors ? e.uniques / s.visitors : 0 }));
+  return s;
+}
+
+const BAD_BY = { error: 'by must be a prop key: [A-Za-z0-9_]{1,32}' };
+const byUniques = (total) => (x, y) => total(y) - total(x) || (x.name < y.name ? -1 : 1);
+
 // Before/after report, e.g. old site (untagged) vs a redesign's tag. Per
-// segment: overview stats + custom events with rate = uniques / visitors (both
-// visitor-days, like conversions). rows merges the two by event name, delta =
+// segment: segmentStats. rows merges the two by event name, delta =
 // b.rate - a.rate, biggest combined uniques first. Bad input -> { error }.
 function compare(db, opts) {
-  if (opts.by !== undefined && !PROP_KEY.test(opts.by)) {
-    return { error: 'by must be a prop key: [A-Za-z0-9_]{1,32}' };
-  }
+  if (opts.by !== undefined && !PROP_KEY.test(opts.by)) return BAD_BY;
   const out = {};
   for (const k of ['a', 'b']) {
     const seg = parseSegment(opts[k], opts);
     if (!seg) return { error: `bad segment ${k}: want tag:<name>, untagged or date:YYYY-MM-DD..YYYY-MM-DD` };
-    const p = { siteId: opts.siteId, ...seg };
-    const s = overviewStats(db, p, tagWhere(seg.tag));
-    s.events = eventsList(db, { ...p, by: opts.by }).map((e) => ({ ...e, rate: s.visitors ? e.uniques / s.visitors : 0 }));
-    out[k] = { segment: opts[k], ...s };
+    out[k] = { segment: opts[k], ...segmentStats(db, opts, seg) };
   }
   const zero = { count: 0, uniques: 0, rate: 0 };
   const byName = {};
@@ -533,8 +539,33 @@ function compare(db, opts) {
   }
   out.rows = Object.values(byName)
     .map((r) => ({ ...r, delta: r.b.rate - r.a.rate }))
-    .sort((x, y) => y.a.uniques + y.b.uniques - (x.a.uniques + x.b.uniques) || (x.name < y.name ? -1 : 1));
+    .sort(byUniques((r) => r.a.uniques + r.b.uniques));
   return out;
 }
 
-module.exports = { PROP_KEY, overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, outbound, countries, platforms, tags, compare, range, vwClause, normalizeExcludes };
+// Every version side by side: untagged (the pre-tag baseline, skipped when it
+// has no traffic) then each tag oldest first. Same from/to rule as compare's
+// tag segments. rows: one cell per segment, zero-filled, biggest total first.
+function compareAll(db, opts) {
+  if (opts.by !== undefined && !PROP_KEY.test(opts.by)) return BAD_BY;
+  const t = tags(db, opts);
+  const names = [
+    ...(t.some((r) => r.tag === null && r.visitors) ? ['untagged'] : []),
+    ...t
+      .filter((r) => r.tag !== null)
+      .sort((x, y) => (x.first < y.first ? -1 : x.first > y.first ? 1 : x.tag < y.tag ? -1 : 1))
+      .map((r) => 'tag:' + r.tag),
+  ];
+  const segments = names.map((n) => ({ segment: n, ...segmentStats(db, opts, parseSegment(n, opts)) }));
+  const byName = {};
+  segments.forEach((s, i) => {
+    for (const e of s.events) {
+      const r = byName[e.name] || (byName[e.name] = { name: e.name, cells: segments.map(() => ({ count: 0, uniques: 0, rate: 0 })) });
+      r.cells[i] = { count: e.count, uniques: e.uniques, rate: e.rate };
+    }
+  });
+  const rows = Object.values(byName).sort(byUniques((r) => r.cells.reduce((n, x) => n + x.uniques, 0)));
+  return { segments, rows };
+}
+
+module.exports = { PROP_KEY, overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, outbound, countries, platforms, tags, compare, compareAll, range, vwClause, normalizeExcludes };

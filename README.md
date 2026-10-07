@@ -164,6 +164,13 @@ reserved word `none`) is stored as untagged. Pages without a tag send none.
   `home_cta:demo`, `home_cta:download` and so on. Events without the prop keep
   their bare name. A malformed segment returns `400 {"error": ...}`.
 
+- **`GET /gm/api/compare?all=1[&by=<propKey>]`** compares every version at
+  once: `untagged` first (left out when it has no traffic), then each tag,
+  oldest first. It returns `segments`, an array of the per-segment stats above,
+  and `rows`, where each event carries one `cells` entry (`count`, `uniques`,
+  `rate`) per segment in the same order, zero-filled when that version never
+  fired it.
+
 The redesign workflow: ship the new site with `data-tag="redesign-2026-09"` and
 fire the same CTA events on both versions (`gm('home_cta', { cta: 'demo' })`).
 Then compare the old site with the new one:
@@ -191,7 +198,8 @@ GET /gm/api/compare?a=untagged&b=tag:redesign-2026-09&by=cta
 old site never set a tag, compare date ranges on either side of the launch
 instead: `a=date:2026-08-10..2026-09-09&b=date:2026-09-10..2026-10-09`. The
 dashboard's **Compare** view (`/_analytics#compare`) does all of this in a
-table.
+table: pick A and B from a tag dropdown (or a date range), or switch to
+**All versions** for one column per tag.
 
 Tags live on raw events only, not in the daily rollups, so both sides of a
 comparison must fall inside the 90-day raw retention. Events recorded with
@@ -333,7 +341,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /gm/api/countries` | Visitors per country | " |
 | `GET /gm/api/platforms` | Browsers, OS, devices, languages | " |
 | `GET /gm/api/tags` | Tags seen (all retained data) + untagged, with visitors/pageviews/first/last day | " |
-| `GET /gm/api/compare` | Two segments side by side: `?a=untagged&b=tag:x[&by=prop]` | " |
+| `GET /gm/api/compare` | Two segments side by side: `?a=untagged&b=tag:x[&by=prop]`, or every version: `?all=1` | " |
 | `GET /gm/world.svg` | World map asset for the dashboard | public |
 | `GET /gm/api/hub/overview` | All sites (local + peers) | " |
 
