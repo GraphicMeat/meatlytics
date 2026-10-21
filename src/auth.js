@@ -10,6 +10,10 @@ const crypto = require('node:crypto');
 // one-time setup code, and the shared brute-force throttle.
 
 const COOKIE = 'gm_dash';
+// Site-wide marker (Path=/) so the collector can see "owner is logged in" on
+// /gm/e; gm_dash stays scoped to /_analytics. Own token kind: it never doubles
+// as a session.
+const OWNER_COOKIE = 'gm_owner';
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 const HEAT_TTL_MS = 10 * 60 * 1000;
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
@@ -52,8 +56,8 @@ function createAuth(store, opts) {
   const makeSession = () => mint('s', SESSION_TTL_MS);
   const makeHeatToken = () => mint('h', HEAT_TTL_MS);
 
-  function cookieToken(req) {
-    const m = (req.headers.cookie || '').match(/(?:^|;\s*)gm_dash=([^;]+)/);
+  function cookieToken(req, name = COOKIE) {
+    const m = (req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
     return m ? decodeURIComponent(m[1]) : '';
   }
   function bearer(req) {
@@ -63,6 +67,9 @@ function createAuth(store, opts) {
 
   // Session present via HttpOnly cookie (used when serving the dashboard HTML).
   const isSession = (req) => valid(cookieToken(req), 's');
+
+  // Logged-in dashboard owner browsing the host site: never tracked.
+  const isOwner = (req) => valid(cookieToken(req, OWNER_COOKIE), 'o');
 
   // Login brute-force throttle: 10 failures / 15 min per IP, in-memory. Shared
   // across password-era routes and the webauthn/setup-code routes in index.js.
@@ -89,14 +96,25 @@ function createAuth(store, opts) {
     );
   }
 
-  function setSessionCookie(req, res) {
-    const tok = makeSession();
+  const cookieAttrs = (req, path) => {
     const https =
       req.headers['x-forwarded-proto'] === 'https' || !!(req.socket && req.socket.encrypted);
-    res.setHeader(
-      'Set-Cookie',
-      `${COOKIE}=${encodeURIComponent(tok)}; Path=/_analytics; HttpOnly; SameSite=Strict${https ? '; Secure' : ''}; Max-Age=${SESSION_TTL_MS / 1000}`
-    );
+    return `Path=${path}; HttpOnly; SameSite=Strict${https ? '; Secure' : ''}; Max-Age=${SESSION_TTL_MS / 1000}`;
+  };
+  const ownerCookie = (req) =>
+    `${OWNER_COOKIE}=${encodeURIComponent(mint('o', SESSION_TTL_MS))}; ${cookieAttrs(req, '/')}`;
+
+  // Refresh the owner marker alone (existing sessions predate it).
+  function setOwnerCookie(req, res) {
+    res.setHeader('Set-Cookie', ownerCookie(req));
+  }
+
+  function setSessionCookie(req, res) {
+    const tok = makeSession();
+    res.setHeader('Set-Cookie', [
+      `${COOKIE}=${encodeURIComponent(tok)}; ${cookieAttrs(req, '/_analytics')}`,
+      ownerCookie(req),
+    ]);
     return tok;
   }
 
@@ -209,6 +227,8 @@ function createAuth(store, opts) {
   const auth = {
     loginByKey,
     isSession,
+    isOwner,
+    setOwnerCookie,
     apiAllowed,
     makeSession,
     makeHeatToken,

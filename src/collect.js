@@ -148,7 +148,7 @@ function mapEvent(ev, stamp) {
   return row;
 }
 
-function createCollector(store, opts) {
+function createCollector(store, opts, isOwner = () => false) {
   const siteId = opts.siteId;
   const version = deployVersion(opts);
   const queue = [];
@@ -230,6 +230,7 @@ function createCollector(store, opts) {
     const ua = req.headers['user-agent'] || '';
     if (!ua || BOT_RE.test(ua)) return false;
     if (opts.respectDNT && req.headers.dnt === '1') return false;
+    if (isOwner(req)) return false;
     const e = ev || {};
     const type = TYPES.has(e.type) ? e.type : 'download';
     const stamp = stampFor(ipOf(req), ua, req.headers['accept-language'], req.headers['cf-ipcountry']);
@@ -254,6 +255,7 @@ function createCollector(store, opts) {
 
     if (!ua || BOT_RE.test(ua)) return done();
     if (opts.respectDNT && req.headers.dnt === '1') return done();
+    if (isOwner(req)) return done();
     if (!allow(ip)) return done();
 
     let size = 0;

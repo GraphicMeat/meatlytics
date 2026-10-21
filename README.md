@@ -383,12 +383,18 @@ older version that do not send the field are left out, not counted as 0).
 Built to the Plausible/Fathom standard — stricter in places:
 
 - **No cookies, no localStorage, no fingerprinting** for visitors. The only
-  cookie is the dashboard owner's own login session, scoped to `/_analytics`.
+  cookie is the dashboard owner's own login session, scoped to `/_analytics`
+  (plus a signed `gm_owner` marker, see Owner exclusion below).
   (One localStorage exception: the self-exclusion flag below — an opt-out,
   never visitor data.)
 - **Self-exclusion:** visit any page with `?gm-ignore=1` to stop counting
   that browser (yours), `?gm-ignore=0` to resume. Persisted in
   `localStorage.gm_ignore`. Do it once per browser/device you use.
+- **Owner exclusion:** while you are logged in to the dashboard, your visits
+  to the site are not counted, in the browser beacon or in `analytics.track()`.
+  Login sets a signed, HttpOnly `gm_owner` cookie (site-wide, 7 days, same
+  lifetime as the session) that the collector checks; opening the dashboard
+  with a live session refreshes it. Visitors never get it.
 - **Cookieless identity:** `visitor = SHA256(dailySalt + ip + userAgent + siteId)`,
   truncated to 16 bytes. The salt rotates at UTC midnight and the old salt is
   discarded — after 24 hours nobody, including you, can re-derive who was who.

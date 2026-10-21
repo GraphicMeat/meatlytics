@@ -105,8 +105,8 @@ module.exports = function analytics(opts) {
   }
   const github = createGithub(opts); // throws on a bad opts.github before the DB is touched
   const store = openStore(opts.dbPath);
-  const collector = createCollector(store, opts);
   const auth = createAuth(store, opts);
+  const collector = createCollector(store, opts, auth.isOwner);
   const distGm = path.join(__dirname, '..', 'dist', 'gm.js');
   const distDash = path.join(__dirname, '..', 'dist', 'dashboard.html');
   const srcDash = path.join(__dirname, 'dashboard', 'index.html');
@@ -370,6 +370,7 @@ module.exports = function analytics(opts) {
         html = DASH_MISSING;
       }
       const tok = auth.isSession(req) ? JSON.stringify(auth.makeSession()) : 'null';
+      if (tok !== 'null') auth.setOwnerCookie(req, res);
       html = html.replace('%TOKEN%', tok);
       html = html.replace('%PEERS%', JSON.stringify((opts.peers || []).map((p) => p.name)));
       html = html.replace('%BASE%', () => opts.basePath || '');
