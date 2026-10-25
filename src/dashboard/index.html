@@ -21,6 +21,10 @@ nav button.on{color:var(--fg);background:var(--panel);border:0}
 .range{display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:100%}
 @media(max-width:600px){header{padding:12px 16px;gap:10px}main{padding:16px}.range input[type=date]{flex:1 1 140px;min-width:0}}
 .range .live{color:var(--ok);font-size:13px;margin-left:4px}
+.range label.cmp{display:flex;align-items:center;gap:5px;color:var(--mut);font-size:13px;cursor:pointer;white-space:nowrap}
+.range label.cmp input{padding:0;margin:0}
+.card .d{font-size:12px;margin-top:2px;font-variant-numeric:tabular-nums;color:var(--mut)}
+.card .d.up{color:var(--ok)}.card .d.down{color:var(--acc)}
 main{padding:20px;max-width:1100px;margin:0 auto}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
@@ -135,7 +139,10 @@ iframe{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;b
     <button data-p="1">Day</button>
     <button data-p="7" class="on">Week</button>
     <button data-p="30">Month</button>
+    <button data-p="90">3M</button>
+    <button data-p="365">Year</button>
     <input type="date" id="from"><input type="date" id="to">
+    <label class="cmp" title="Compare with the previous period of the same length"><input type="checkbox" id="cmp"> vs previous</label>
     <span class="live" id="live"></span>
   </div>
   <button type="button" id="gear" title="Settings" class="%GEARCLASS%">⚙</button>
@@ -158,7 +165,7 @@ var BASE = '%BASE%';
 var PREVIEW = '%PREVIEW%'; // same-origin proxy route for the heatmap iframe ('' = frame the path directly)
 var $ = function(s,r){return (r||document).querySelector(s)};
 var $$ = function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
-var state = {view:'overview', site:'local', from:'', to:'', tag:'', rtTimer:0};
+var state = {view:'overview', site:'local', from:'', to:'', tag:'', compare:false, rtTimer:0};
 
 function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function pct(x){ return (x*100).toFixed(1)+'%'; }
@@ -172,6 +179,8 @@ function api(path){
   });
 }
 function qs(){ return 'from='+state.from+'&to='+state.to+(state.tag?'&tag='+encodeURIComponent(state.tag):''); }
+// overview + hub/overview also return the previous period when the toggle is on
+function cqs(){ return qs()+(state.compare?'&compare=prev':''); }
 
 // ---------- World map ----------
 var MAP=null; // cached fetch promise -> svg text or null
@@ -445,6 +454,11 @@ $$('#range button').forEach(function(b){ b.onclick=function(){
   try{ localStorage.setItem('gm.range', b.dataset.p); }catch(e){}
   render();
 };});
+$('#cmp').onchange=function(){
+  state.compare=this.checked;
+  try{ localStorage.setItem('gm.compare', this.checked?'1':'0'); }catch(e){}
+  render();
+};
 $('#from').onchange=function(){ state.from=this.value; render(); };
 $('#to').onchange=function(){ state.to=this.value; render(); };
 
@@ -481,18 +495,10 @@ if(PEERS.length){
 
 // Merge hub /gm/api/hub/overview sites into one overview-shaped object.
 // which: 'local' handled elsewhere; a peer name picks that one site; '__all__' sums every reachable site.
-function combineSites(sites, which){
-  var offline=[], picked=[];
-  if(which==='__all__'){
-    picked = sites.filter(function(s){ if(!s.ok) offline.push(s.name); return s.ok; });
-  } else {
-    var one = sites.filter(function(s){ return s.name===which; })[0];
-    if(one && one.ok) picked=[one]; else if(one) offline.push(one.name);
-  }
-  if(!picked.length) return {visitors:0,pageviews:0,avgDuration:0,bounceRate:0,engagementRate:null,timeseries:[],offline:offline};
+// With ?compare=prev each site also carries .previous; it is summed the same way (only when all picked sites have it).
+function sumSites(datas){
   var visitors=0,pageviews=0,durSum=0,bounceSum=0,engSum=0,engW=0,tsMap={};
-  picked.forEach(function(s){
-    var d=s.data;
+  datas.forEach(function(d){
     visitors+=d.visitors; pageviews+=d.pageviews;
     durSum+=d.avgDuration*d.pageviews; bounceSum+=d.bounceRate*d.pageviews;
     if(typeof d.engagementRate==='number'){ var w=typeof d.sessions==='number'?d.sessions:d.pageviews; engSum+=d.engagementRate*w; engW+=w; }
@@ -503,7 +509,24 @@ function combineSites(sites, which){
   });
   var ts=Object.keys(tsMap).sort().map(function(k){return tsMap[k]});
   return {visitors:visitors,pageviews:pageviews,avgDuration:pageviews?Math.round(durSum/pageviews):0,
-    bounceRate:pageviews?bounceSum/pageviews:0,engagementRate:engW?engSum/engW:null,timeseries:ts,offline:offline};
+    bounceRate:pageviews?bounceSum/pageviews:0,engagementRate:engW?engSum/engW:null,timeseries:ts};
+}
+function combineSites(sites, which){
+  var offline=[], picked=[];
+  if(which==='__all__'){
+    picked = sites.filter(function(s){ if(!s.ok) offline.push(s.name); return s.ok; });
+  } else {
+    var one = sites.filter(function(s){ return s.name===which; })[0];
+    if(one && one.ok) picked=[one]; else if(one) offline.push(one.name);
+  }
+  if(!picked.length) return {visitors:0,pageviews:0,avgDuration:0,bounceRate:0,engagementRate:null,timeseries:[],offline:offline};
+  var o=sumSites(picked.map(function(s){return s.data}));
+  o.offline=offline;
+  if(picked.every(function(s){return s.data.previous})){
+    o.previous=sumSites(picked.map(function(s){return s.data.previous}));
+    o.previous.from=picked[0].data.previous.from; o.previous.to=picked[0].data.previous.to;
+  }
+  return o;
 }
 
 function render(){
@@ -521,26 +544,23 @@ function render(){
 function renderOverview(){
   var el=$('#v-overview');
   if(state.site && state.site!=='local'){
-    api('hub/overview?'+qs()).then(function(d){
+    api('hub/overview?'+cqs()).then(function(d){
       var o=combineSites(d.sites, state.site);
       el.innerHTML=
-        '<div class="cards">'+
-          card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
-          card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+card('Engaged',pctOrDash(o.engagementRate))+
-        '</div>'+
+        prevNote(o.previous)+cards(o,o.previous)+
         '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
         (o.offline.length?'<p class="mut">Offline: '+o.offline.map(esc).join(', ')+'</p>':'');
-      drawTS(o.timeseries);
+      drawTS(o.timeseries,o.previous);
     });
     return;
   }
-  Promise.all([api('overview?'+qs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []}), api('platforms?'+qs()).catch(function(){return null})]).then(function(res){
+  Promise.all([api('overview?'+cqs()), api('pages?'+qs()), api('sources?'+qs()), api('countries?'+qs()).catch(function(){return []}), api('platforms?'+qs()).catch(function(){return null})]).then(function(res){
     var o=res[0], pg=res[1], sr=res[2], co=res[3]||[], pl=res[4];
     var f=o.filtered;
     el.innerHTML=
       (f?'<p class="mut" style="margin:0 0 6px">All traffic</p>':'')+
-      cards(o)+
-      (f?'<p class="mut" style="margin:0 0 6px">Excluding '+o.excluded.map(esc).join(', ')+'</p>'+cards(f):'')+
+      prevNote(o.previous)+cards(o,o.previous)+
+      (f?'<p class="mut" style="margin:0 0 6px">Excluding '+o.excluded.map(esc).join(', ')+'</p>'+cards(f,o.previous&&o.previous.filtered):'')+
       '<div class="panel"><h3>Traffic</h3><canvas id="ts" height="220"></canvas></div>'+
       '<div class="panel"><h3>Countries</h3><div class="grid2"><div id="cmap"></div><div>'+countriesTable(co,!!f)+'</div></div></div>'+
       '<div class="grid2">'+
@@ -548,14 +568,37 @@ function renderOverview(){
         '<div class="panel"><h3>Sources</h3>'+sourcesBlock(sr)+'</div>'+
       '</div>'+
       '<div class="panel"><h3>Platforms</h3><div class="grid2">'+platformsBlock(pl)+'</div></div>';
-    drawTS(o.timeseries);
+    drawTS(o.timeseries,o.previous);
     renderMap($('#cmap'), co.filter(function(r){return r.country}).map(function(r){return {country:r.country,n:r.visitors}}), 'choropleth');
   });
 }
-function card(k,v){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
-function cards(o){
-  return '<div class="cards">'+card('Visitors',o.visitors)+card('Pageviews',o.pageviews)+
-    card('Avg time',fmtDur(o.avgDuration))+card('Bounce rate',pct(o.bounceRate))+card('Engaged',pctOrDash(o.engagementRate))+'</div>';
+function card(k,v,d){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div>'+(d||'')+'</div>'; }
+// Change vs the previous period under a card. mode: 'rel' relative %, 'pt' points (higher is better), 'ptinv' points (lower is better).
+function delta(o,prev,key,mode){
+  if(!prev) return '';
+  if(!prev.pageviews) return '<div class="d">no prior data</div>';
+  var c=o[key], b=prev[key];
+  if(c==null||b==null) return '<div class="d">–</div>';
+  var diff, txt;
+  if(mode==='rel'){
+    if(!b) return '<div class="d">'+(c?'new':'–')+'</div>';
+    diff=(c-b)/b*100; txt=Math.round(diff);
+  } else { diff=(c-b)*100; txt=Math.round(diff*10)/10; }
+  if(!txt) return '<div class="d">no change</div>';
+  var good=(txt>0)!==(mode==='ptinv');
+  return '<div class="d '+(good?'up':'down')+'">'+(txt>0?'▲ +':'▼ ')+txt+(mode==='rel'?'%':' pt')+'</div>';
+}
+function cards(o,prev){
+  return '<div class="cards">'+card('Visitors',o.visitors,delta(o,prev,'visitors','rel'))+card('Pageviews',o.pageviews,delta(o,prev,'pageviews','rel'))+
+    card('Avg time',fmtDur(o.avgDuration),delta(o,prev,'avgDuration','rel'))+card('Bounce rate',pct(o.bounceRate),delta(o,prev,'bounceRate','ptinv'))+
+    card('Engaged',pctOrDash(o.engagementRate),delta(o,prev,'engagementRate','pt'))+'</div>';
+}
+// What the deltas compare against; raw events are kept 90 days, so a previous period older than that has no data.
+function prevNote(prev){
+  if(!prev) return '';
+  var cut=new Date(Date.now()-90*86400000).toISOString().slice(0,10);
+  return '<p class="mut" style="margin:0 0 6px">vs previous period '+esc(prev.from)+' – '+esc(prev.to)+
+    (prev.from<cut?' (before the 90-day retention, so partly or fully empty)':'')+'</p>';
 }
 function pagesTable(rows){
   if(!rows.length) return '<p class="mut">No data</p>';
@@ -587,32 +630,59 @@ function platformsBlock(p){
   }
   return list('Browser',p.browsers)+list('OS',p.os)+list('Device',p.devices)+list('Language',p.langs);
 }
-function drawTS(data){
+function dayList(from,to){
+  var out=[], t=Date.parse(from+'T00:00:00Z'), e=Date.parse(to+'T00:00:00Z');
+  for(; t<=e && out.length<800; t+=864e5) out.push(new Date(t).toISOString().slice(0,10));
+  return out;
+}
+// Bars = pageviews, green line = visitors, one slot per day of the range (empty days are zero).
+// prev ({from,to,timeseries}) overlays the previous period, day i of it over day i of the range: dashed line = visitors, outline bars = pageviews.
+function drawTS(data,prev){
   var c=$('#ts'); if(!c)return;
   var dpr=window.devicePixelRatio||1, W=c.clientWidth, H=220;
   c.width=W*dpr; c.height=H*dpr; var g=c.getContext('2d'); g.scale(dpr,dpr);
   g.clearRect(0,0,W,H);
-  if(!data.length){ g.fillStyle='#8b8b93'; g.fillText('No data',10,20); return; }
+  var days=dayList(state.from,state.to);
+  if(!days.length) days=data.map(function(d){return d.date});
+  if(!data.length && !(prev&&prev.timeseries.length)){ g.fillStyle='#8b8b93'; g.fillText('No data',10,20); return; }
+  var cur={}; data.forEach(function(d){ cur[d.date]=d; });
+  var pdays=prev?dayList(prev.from,prev.to):[], pm={}; if(prev) prev.timeseries.forEach(function(d){ pm[d.date]=d; });
   var pad=28, cw=W-pad*2, ch=H-pad*2;
   var max=1; data.forEach(function(d){ max=Math.max(max,d.pageviews); });
+  if(prev) prev.timeseries.forEach(function(d){ max=Math.max(max,d.pageviews); });
   g.strokeStyle='#2a2a30'; g.lineWidth=1;
   for(var i=0;i<=4;i++){ var y=pad+ch*i/4; g.beginPath();g.moveTo(pad,y);g.lineTo(W-pad,y);g.stroke();
     g.fillStyle='#8b8b93';g.font='11px system-ui';g.fillText(Math.round(max*(1-i/4)),4,y+3); }
-  var n=data.length, bw=cw/n;
-  // pageview bars
-  data.forEach(function(d,i){
+  var n=days.length, bw=cw/n;
+  if(prev){
+    g.strokeStyle='rgba(139,139,147,.7)'; g.lineWidth=1;
+    pdays.forEach(function(dt,i){
+      var d=pm[dt]; if(!d||i>=n) return;
+      var h=d.pageviews/max*ch;
+      g.strokeRect(pad+i*bw+bw*0.2, pad+ch-h, bw*0.6, h);
+    });
+    g.strokeStyle='rgba(232,232,234,.55)'; g.lineWidth=2; g.setLineDash([5,4]); g.beginPath();
+    pdays.forEach(function(dt,i){
+      if(i>=n) return;
+      var x=pad+i*bw+bw/2, y=pad+ch-((pm[dt]?pm[dt].visitors:0)/max*ch);
+      i?g.lineTo(x,y):g.moveTo(x,y);
+    });
+    g.stroke(); g.setLineDash([]);
+  }
+  days.forEach(function(dt,i){
+    var d=cur[dt]; if(!d) return;
     var h=d.pageviews/max*ch, x=pad+i*bw+bw*0.2, w=bw*0.6, y=pad+ch-h;
     g.fillStyle='rgba(232,69,31,.5)'; g.fillRect(x,y,w,h);
   });
-  // visitors line
   g.strokeStyle='#3ecf8e'; g.lineWidth=2; g.beginPath();
-  data.forEach(function(d,i){
-    var x=pad+i*bw+bw/2, y=pad+ch-(d.visitors/max*ch);
+  days.forEach(function(dt,i){
+    var x=pad+i*bw+bw/2, y=pad+ch-((cur[dt]?cur[dt].visitors:0)/max*ch);
     i?g.lineTo(x,y):g.moveTo(x,y);
   });
   g.stroke();
   g.fillStyle='#8b8b93';g.font='10px system-ui';
-  if(n>1){ g.fillText(data[0].date.slice(5),pad,H-8); g.fillText(data[n-1].date.slice(5),W-pad-24,H-8); }
+  if(n>1){ g.fillText(days[0].slice(5),pad,H-8); g.fillText(days[n-1].slice(5),W-pad-24,H-8); }
+  if(prev){ g.textAlign='right'; g.fillText('dashed = previous period',W-pad,12); g.textAlign='left'; }
 }
 
 // ---------- Downloads (conversion rate) ----------
@@ -918,7 +988,9 @@ function renderRealtime(){
 
 // ---------- boot ----------
 var savedRange=7; try{ savedRange=+localStorage.getItem('gm.range')||7; }catch(e){}
-pickRange([1,7,30].indexOf(savedRange)>=0?savedRange:7);
+pickRange([1,7,30,90,365].indexOf(savedRange)>=0?savedRange:7);
+try{ state.compare=localStorage.getItem('gm.compare')==='1'; }catch(e){}
+$('#cmp').checked=state.compare;
 // deep link: #flows / #funnels / #compare / #heatmaps / #realtime selects that view on load
 var dl=location.hash.slice(1);
 if(['flows','funnels','compare','heatmaps','realtime'].indexOf(dl)>=0){

@@ -53,7 +53,7 @@ function handle(req, res, url, ctx) {
     case '/gm/api/token':
       return json(res, { token: ctx.auth.makeHeatToken() }), true;
     case '/gm/api/overview':
-      return json(res, Q.overview(db, { ...base, exclude })), true;
+      return json(res, Q.overview(db, { ...base, exclude, compare: sp.get('compare') === 'prev' })), true;
     case '/gm/api/pages':
       return json(res, Q.pages(db, base)), true;
     case '/gm/api/sources':

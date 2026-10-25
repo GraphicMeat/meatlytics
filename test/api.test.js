@@ -296,3 +296,15 @@ test('outbound: needs auth; lists host + page with counts over HTTP', async () =
   assert.deepStrictEqual(v2.body, [{ host: 'github.com', path: '/blog', count: 1, uniques: 1 }]);
   mw.stop();
 });
+
+test('overview ?compare=prev adds the previous period; absent -> none', async () => {
+  const { mw, server } = makeApp();
+  const auth = ['Authorization', 'Bearer ' + KEY];
+  const plain = await request(server).get('/gm/api/overview?from=2026-07-10&to=2026-07-16').set(...auth).expect(200);
+  assert.strictEqual(plain.body.previous, undefined);
+  const cmp = await request(server).get('/gm/api/overview?from=2026-07-10&to=2026-07-16&compare=prev').set(...auth).expect(200);
+  assert.strictEqual(cmp.body.previous.from, '2026-07-03');
+  assert.strictEqual(cmp.body.previous.to, '2026-07-09');
+  assert.ok('visitors' in cmp.body.previous && 'timeseries' in cmp.body.previous);
+  mw.stop();
+});

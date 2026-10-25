@@ -663,3 +663,47 @@ test('compareAll: no untagged traffic -> untagged column omitted; no data at all
   assert.deepStrictEqual(Q.compareAll(empty.db, { siteId: SITE }), { segments: [], rows: [] });
   empty.close();
 });
+
+// ---------- previous-period comparison ----------
+
+test('previousRange: equal-length window ending the day before from', () => {
+  assert.deepStrictEqual(Q.previousRange({ from: '2026-07-10', to: '2026-07-16' }), { from: '2026-07-03', to: '2026-07-09' });
+  assert.deepStrictEqual(Q.previousRange({ from: '2026-07-16', to: '2026-07-16' }), { from: '2026-07-15', to: '2026-07-15' });
+  // crosses a month boundary
+  assert.deepStrictEqual(Q.previousRange({ from: '2026-03-01', to: '2026-03-30' }), { from: '2026-01-30', to: '2026-02-28' });
+  // 90 and 365 day presets
+  assert.deepStrictEqual(Q.previousRange({ from: '2026-07-18', to: '2026-10-15' }), { from: '2026-04-19', to: '2026-07-17' });
+  assert.deepStrictEqual(Q.previousRange({ from: '2025-10-17', to: '2026-10-16' }), { from: '2024-10-17', to: '2025-10-16' });
+});
+
+test('overview compare: previous period stats alongside current', () => {
+  const store = openStore(tmpDbPath());
+  seed(store); // D1 (07-15): visitor D, 2 pv; D2 (07-16): A,B,C, 6 pv
+  const o = Q.overview(store.db, { siteId: SITE, from: D2, to: D2, compare: true });
+  assert.strictEqual(o.visitors, 3);
+  assert.strictEqual(o.pageviews, 6);
+  assert.strictEqual(o.previous.from, D1);
+  assert.strictEqual(o.previous.to, D1);
+  assert.strictEqual(o.previous.visitors, 1);
+  assert.strictEqual(o.previous.pageviews, 2);
+  assert.strictEqual(o.previous.bounceRate, 0);
+  assert.deepStrictEqual(o.previous.timeseries.map((t) => t.date), [D1]);
+  store.close();
+});
+
+test('overview compare: previous honours tag and excluded paths like current', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  const o = Q.overview(store.db, { siteId: SITE, from: D2, to: D2, compare: true, exclude: ['/pricing'] });
+  assert.strictEqual(o.previous.pageviews, 2);
+  assert.strictEqual(o.previous.filtered.pageviews, 1); // D's /home only
+  assert.deepStrictEqual(o.previous.excluded, ['/pricing']);
+  store.close();
+});
+
+test('overview without compare has no previous', () => {
+  const store = openStore(tmpDbPath());
+  seed(store);
+  assert.strictEqual(Q.overview(store.db, RANGE).previous, undefined);
+  store.close();
+});

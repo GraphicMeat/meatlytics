@@ -76,3 +76,29 @@ test('hub overview route requires the local apiKey like any other /gm/api/* rout
   main.mw.stop();
   await new Promise((r) => main.server.close(r));
 });
+
+test('hub overview forwards ?compare=prev: local and peer both return previous', async () => {
+  const peer = await boot({ siteId: 'peer-site', dbPath: tmpDbPath(), apiKey: 'pk' });
+  const main = await boot({
+    siteId: 'main-site',
+    dbPath: tmpDbPath(),
+    apiKey: 'main-key',
+    peers: [{ name: 'peer-site', url: `http://127.0.0.1:${peer.port}`, apiKey: 'pk' }],
+  });
+  try {
+    const res = await request(main.server)
+      .get('/gm/api/hub/overview?from=2026-07-10&to=2026-07-16&compare=prev')
+      .set('Authorization', 'Bearer main-key')
+      .expect(200);
+    for (const s of res.body.sites) {
+      assert.strictEqual(s.ok, true);
+      assert.strictEqual(s.data.previous.from, '2026-07-03', s.name);
+      assert.strictEqual(s.data.previous.to, '2026-07-09', s.name);
+    }
+  } finally {
+    peer.mw.stop();
+    main.mw.stop();
+    await new Promise((r) => peer.server.close(r));
+    await new Promise((r) => main.server.close(r));
+  }
+});

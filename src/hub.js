@@ -35,6 +35,7 @@ async function overview(ctx, qs) {
       from: sp.get('from') || undefined,
       to: sp.get('to') || undefined,
       tag: sp.get('tag') || undefined,
+      compare: sp.get('compare') === 'prev',
     }),
   };
   const peers = ctx.peers || [];

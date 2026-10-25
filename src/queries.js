@@ -18,6 +18,15 @@ function range(opts) {
   return { from, to };
 }
 
+// Equal-length window that ends the day before opts.from ("this week" -> last week).
+function previousRange(opts) {
+  const { from, to } = range(opts);
+  const f = Date.parse(from + 'T00:00:00Z');
+  const days = Math.round((Date.parse(to + 'T00:00:00Z') - f) / 86400000) + 1;
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+  return { from: iso(f - days * 86400000), to: iso(f - 86400000) };
+}
+
 const DAY = "date(ts/1000,'unixepoch')";
 
 // Optional tag filter shared by every range read. Missing/'' -> no filter (all
@@ -70,6 +79,17 @@ const ENGAGED_MS = 10000;
 
 function overview(db, opts) {
   const { from, to } = range(opts);
+  const o = overviewFor(db, opts, from, to);
+  // opts.compare: same stats over the previous period. Ranges reaching past the
+  // 90-day raw window come back as zeros (see the ponytail note up top).
+  if (opts.compare) {
+    const prev = previousRange({ from, to });
+    o.previous = { ...prev, ...overviewFor(db, opts, prev.from, prev.to) };
+  }
+  return o;
+}
+
+function overviewFor(db, opts, from, to) {
   const p = { siteId: opts.siteId, from, to, ex: '[]', tag: opts.tag };
   const tw = tagWhere(opts.tag);
   const o = overviewStats(db, p, tw);
@@ -568,4 +588,4 @@ function compareAll(db, opts) {
   return { segments, rows };
 }
 
-module.exports = { PROP_KEY, overview, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, outbound, countries, platforms, tags, compare, compareAll, range, vwClause, normalizeExcludes };
+module.exports = { PROP_KEY, overview, previousRange, pages, sources, flows, funnel, conversions, signalSince, signalCount, heatmap, realtime, eventsList, outbound, countries, platforms, tags, compare, compareAll, range, vwClause, normalizeExcludes };

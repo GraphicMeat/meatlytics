@@ -31,6 +31,7 @@ Add one script tag. No configuration, no event wiring:
 - **Scroll depth, time on page** (visible time, not wall-clock)
 - **Traffic sources** — referrer classification (search/social/direct) + UTM campaigns
 - **Countries** — visitor country per date range + live world map, read at ingest from Cloudflare's `CF-IPCountry` edge header (no geo database, no external API, IP still never stored; deployments not behind Cloudflare record no country)
+- **Previous-period comparison** — range presets Day / Week / Month / 3M / Year, and a "vs previous" toggle that shows the change against the equal-length period before (this week vs last week) on every overview card and as a dashed overlay on the traffic chart. Raw events are kept 90 days, so a previous period older than that shows no data
 - **Realtime** — who's on the site right now, with a pulsing world map
 
 Custom events when you need precision:
@@ -345,7 +346,7 @@ SQLite-backed store) and `middleware.stop()` (stops flush + nightly timers).
 | `GET /_analytics/api/key` | Read the current `apiKey` | dashboard session |
 | `POST /_analytics/api/key/rotate` | Mint a new `apiKey` (400 if `opts.apiKey` overrides it) | dashboard session |
 | `GET /gm-overlay.js` | Heatmap overlay module (lazy-loaded, dashboard preview only) | public |
-| `GET /gm/api/overview` | Totals, bounce + engagement rate, timeseries | Bearer `apiKey` or dashboard session |
+| `GET /gm/api/overview` | Totals, bounce + engagement rate, timeseries; `?compare=prev` adds `previous` (same stats for the equal-length period before `from`) | Bearer `apiKey` or dashboard session |
 | `GET /gm/api/pages` | Top pages | " |
 | `GET /gm/api/sources` | Referrer classes, domains, campaigns | " |
 | `GET /gm/api/flows` | Session path chains | " |
