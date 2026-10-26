@@ -170,6 +170,7 @@ var state = {view:'overview', site:'local', from:'', to:'', tag:'', compare:fals
 function fmtDur(ms){ if(!ms)return '0s'; var s=Math.round(ms/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function pct(x){ return (x*100).toFixed(1)+'%'; }
 function pctOrDash(x){ return x==null?'-':pct(x); }
+function num(n){ return n.toLocaleString(); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
 
 function api(path){
@@ -574,7 +575,7 @@ function renderOverview(){
 }
 function card(k,v,d){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div>'+(d||'')+'</div>'; }
 // Change vs the previous period under a card. mode: 'rel' relative %, 'pt' points (higher is better), 'ptinv' points (lower is better).
-function delta(o,prev,key,mode){
+function delta(o,prev,key,mode,fmt){
   if(!prev) return '';
   if(!prev.pageviews) return '<div class="d">no prior data</div>';
   var c=o[key], b=prev[key];
@@ -584,14 +585,15 @@ function delta(o,prev,key,mode){
     if(!b) return '<div class="d">'+(c?'new':'–')+'</div>';
     diff=(c-b)/b*100; txt=Math.round(diff);
   } else { diff=(c-b)*100; txt=Math.round(diff*10)/10; }
-  if(!txt) return '<div class="d">no change</div>';
+  if(!txt) return '<div class="d">no change <span class="mut">was '+fmt(b)+'</span></div>';
   var good=(txt>0)!==(mode==='ptinv');
-  return '<div class="d '+(good?'up':'down')+'">'+(txt>0?'▲ +':'▼ ')+txt+(mode==='rel'?'%':' pt')+'</div>';
+  return '<div class="d '+(good?'up':'down')+'">'+(txt>0?'▲ +':'▼ ')+(txt<0?'-':'')+Math.abs(txt).toLocaleString()+(mode==='rel'?'%':' pt')+
+    ' <span class="mut">was '+fmt(b)+'</span></div>';
 }
 function cards(o,prev){
-  return '<div class="cards">'+card('Visitors',o.visitors,delta(o,prev,'visitors','rel'))+card('Pageviews',o.pageviews,delta(o,prev,'pageviews','rel'))+
-    card('Avg time',fmtDur(o.avgDuration),delta(o,prev,'avgDuration','rel'))+card('Bounce rate',pct(o.bounceRate),delta(o,prev,'bounceRate','ptinv'))+
-    card('Engaged',pctOrDash(o.engagementRate),delta(o,prev,'engagementRate','pt'))+'</div>';
+  return '<div class="cards">'+card('Visitors',o.visitors,delta(o,prev,'visitors','rel',num))+card('Pageviews',o.pageviews,delta(o,prev,'pageviews','rel',num))+
+    card('Avg time',fmtDur(o.avgDuration),delta(o,prev,'avgDuration','rel',fmtDur))+card('Bounce rate',pct(o.bounceRate),delta(o,prev,'bounceRate','ptinv',pct))+
+    card('Engaged',pctOrDash(o.engagementRate),delta(o,prev,'engagementRate','pt',pct))+'</div>';
 }
 // What the deltas compare against; raw events are kept 90 days, so a previous period older than that has no data.
 function prevNote(prev){
